@@ -1,4 +1,4 @@
 .venv/
-data/billing.db
+data/
 __pycache__/
 .streamlit/secrets.toml

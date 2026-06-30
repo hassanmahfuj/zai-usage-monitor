@@ -14,6 +14,9 @@ from db import (
     get_distinct_usernames,
     get_filtered_data,
 )
+from export_cost import generate_cost_excel
+from export_pdf import generate_summary_pdf
+from export_user import generate_user_pdf
 from zai_sync import sync
 
 st.set_page_config(page_title="Z.ai Usage Monitor", layout="wide")
@@ -97,6 +100,41 @@ df = get_filtered_data(
 if df.empty:
     st.info("No data for the selected filters. Try syncing first.")
     st.stop()
+
+# ---------------------------------------------------------------------------
+# Sidebar — Export section
+# ---------------------------------------------------------------------------
+st.sidebar.header("Export Reports")
+
+if st.sidebar.button("Export Summary PDF"):
+    pdf_bytes = generate_summary_pdf(df, filter_start, filter_end, group_by)
+    st.sidebar.download_button(
+        label="Download Summary PDF",
+        data=pdf_bytes,
+        file_name=f"zai_summary_{filter_start}_{filter_end}.pdf",
+        mime="application/pdf",
+        key="dl_summary_pdf",
+    )
+
+if st.sidebar.button("Export Per-User Report"):
+    user_pdf = generate_user_pdf(df, filter_start, filter_end)
+    st.sidebar.download_button(
+        label="Download Per-User Report",
+        data=user_pdf,
+        file_name=f"zai_users_{filter_start}_{filter_end}.pdf",
+        mime="application/pdf",
+        key="dl_user_pdf",
+    )
+
+if st.sidebar.button("Export Cost Allocation XLSX"):
+    cost_xlsx = generate_cost_excel(df, filter_start, filter_end)
+    st.sidebar.download_button(
+        label="Download Cost Allocation",
+        data=cost_xlsx,
+        file_name=f"zai_cost_{filter_start}_{filter_end}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl_cost_xlsx",
+    )
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Tokens", f"{int(df['token_usage'].sum()):,}")
