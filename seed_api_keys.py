@@ -67,7 +67,7 @@ def seed(dry_run: bool = False) -> int:
         if not api_key:
             skipped += 1
             continue
-        mappings.append((name, _mask_key(api_key)))
+        mappings.append((name.split("@")[0], _mask_key(api_key)))
 
     if dry_run:
         print(f"\n[dry-run] Would insert {len(mappings)} mapping(s) ({skipped} skipped):")
