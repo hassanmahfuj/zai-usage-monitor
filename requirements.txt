@@ -4,3 +4,4 @@ pandas
 plotly
 reportlab
 openpyxl
+beautifulsoup4

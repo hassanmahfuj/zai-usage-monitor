@@ -22,6 +22,7 @@ def generate_user_pdf(
     df: pd.DataFrame,
     start_date: date,
     end_date: date,
+    cdf: pd.DataFrame | None = None,
 ) -> bytes:
     """Generate a per-user usage PDF report.
 
@@ -32,10 +33,17 @@ def generate_user_pdf(
         df: Filtered usage DataFrame.
         start_date: Report period start date.
         end_date: Report period end date.
+        cdf: Optional filtered contributions DataFrame with columns
+            username, contribution_date, count. When empty/None, no
+            contribution rows/columns are added.
 
     Returns:
         PDF file content as bytes.
     """
+    if cdf is None:
+        cdf = pd.DataFrame()
+    have_contrib = not cdf.empty
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
     styles = getSampleStyleSheet()
@@ -61,6 +69,9 @@ def generate_user_pdf(
         total_tokens = int(user_df["token_usage"].sum())
         total_cost = user_df["cost"].sum()
         total_requests = int(user_df["requests"].sum())
+        user_contrib = (
+            int(cdf.loc[cdf["username"] == user, "count"].sum()) if have_contrib else 0
+        )
 
         elements.append(Paragraph(f"User: {user}", styles["Heading2"]))
         elements.append(Spacer(1, 0.15 * inch))
@@ -72,6 +83,8 @@ def generate_user_pdf(
             ["Total Cost", f"${total_cost:,.4f}"],
             ["Total Requests", f"{total_requests:,}"],
         ]
+        if have_contrib:
+            kpi_data.append(["Total Contributions", f"{user_contrib:,}"])
         kpi_table = Table(kpi_data, colWidths=[2.5 * inch, 3 * inch])
         kpi_table.setStyle(
             TableStyle([
@@ -170,15 +183,42 @@ def generate_user_pdf(
             .sort_values("billing_date")
         )
 
-        daily_data = [["Date", "Tokens", "Cost ($)"]]
+        show_daily_contrib = have_contrib
+        if show_daily_contrib:
+            user_daily_contrib = (
+                cdf[cdf["username"] == user]
+                .groupby("contribution_date", as_index=False)
+                .agg(contrib=("count", "sum"))
+            )
+            daily = daily.merge(
+                user_daily_contrib,
+                left_on="billing_date",
+                right_on="contribution_date",
+                how="left",
+            )
+            daily["contrib"] = daily["contrib"].fillna(0)
+
+        daily_header = ["Date", "Tokens", "Cost ($)"]
+        if show_daily_contrib:
+            daily_header.append("Contributions")
+
+        daily_data = [daily_header]
         for _, row in daily.iterrows():
-            daily_data.append([
+            row_vals = [
                 str(row["billing_date"]),
                 f"{int(row['tokens']):,}",
                 f"${row['cost']:,.4f}",
-            ])
+            ]
+            if show_daily_contrib:
+                row_vals.append(f"{int(row['contrib']):,}")
+            daily_data.append(row_vals)
 
-        daily_table = Table(daily_data, colWidths=[2 * inch, 2 * inch, 2 * inch])
+        daily_widths = (
+            [1.7 * inch, 1.7 * inch, 1.5 * inch, 1.4 * inch]
+            if show_daily_contrib
+            else [2 * inch, 2 * inch, 2 * inch]
+        )
+        daily_table = Table(daily_data, colWidths=daily_widths)
         daily_table.setStyle(
             TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#5B9BD5")),

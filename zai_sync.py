@@ -81,6 +81,8 @@ def upsert_records(records: list[dict]) -> int:
     try:
         count = 0
         for r in records:
+            if "apiKey" not in r:
+                continue
             cur = conn.execute(sql, (
                 str(r["billingNo"]),
                 r["billingDate"],

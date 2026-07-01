@@ -27,8 +27,13 @@ def _style_header(ws, row: int, ncols: int) -> None:
         cell.border = border
 
 
-def _style_data_rows(ws, start_row: int, end_row: int, ncols: int) -> None:
-    """Apply alternating row styling to data rows."""
+def _style_data_rows(ws, start_row: int, end_row: int, ncols: int, left_cols: int = 1) -> None:
+    """Apply alternating row styling to data rows.
+
+    Args:
+        left_cols: Number of leading columns to left-align (e.g. S.No + User).
+                   Remaining columns are right-aligned (numeric).
+    """
     light_fill = PatternFill(start_color="D6E4F0", end_color="D6E4F0", fill_type="solid")
     border = Border(
         left=Side(style="thin"),
@@ -40,7 +45,7 @@ def _style_data_rows(ws, start_row: int, end_row: int, ncols: int) -> None:
         for col in range(1, ncols + 1):
             cell = ws.cell(row=row, column=col)
             cell.border = border
-            cell.alignment = Alignment(horizontal="right" if col > 1 else "left")
+            cell.alignment = Alignment(horizontal="left" if col <= left_cols else "right")
             if (row - start_row) % 2 == 1:
                 cell.fill = light_fill
 
@@ -60,23 +65,31 @@ def generate_cost_excel(
     df: pd.DataFrame,
     start_date: date,
     end_date: date,
+    cdf: pd.DataFrame | None = None,
 ) -> bytes:
     """Generate a cost allocation Excel workbook.
 
-    Creates a workbook with 4 sheets:
-      1. Monthly Summary - total cost, tokens, requests per month
-      2. Per-User Allocation - who used what, for finance
+    Creates a workbook with 4-5 sheets:
+      1. Monthly Summary - total cost, tokens, requests (and contributions) per month
+      2. Per-User Allocation - who used what, for finance (and contributions)
       3. Per-Model Breakdown - which models cost the most
       4. Raw Data - all filtered records
+      5. Contributions - daily per-user contribution counts (only when cdf provided)
 
     Args:
         df: Filtered usage DataFrame.
         start_date: Report period start date.
         end_date: Report period end date.
+        cdf: Optional filtered contributions DataFrame with columns
+            username, contribution_date, count.
 
     Returns:
         Excel file content as bytes.
     """
+    if cdf is None:
+        cdf = pd.DataFrame()
+    have_contrib = not cdf.empty
+
     wb = Workbook()
 
     # --- Sheet 1: Monthly Summary ---
@@ -92,14 +105,26 @@ def generate_cost_excel(
         .sort_values("month")
     )
 
+    if have_contrib:
+        cdf_copy = cdf.copy()
+        cdf_copy["month"] = pd.to_datetime(cdf_copy["contribution_date"]).dt.to_period("M").astype(str)
+        contrib_monthly = (
+            cdf_copy.groupby("month", as_index=False)
+            .agg(contrib=("count", "sum"))
+        )
+        monthly = monthly.merge(contrib_monthly, on="month", how="left")
+        monthly["contrib"] = monthly["contrib"].fillna(0)
+
     ws1.cell(row=1, column=1, value="Monthly Summary")
     ws1.cell(row=1, column=1).font = Font(bold=True, size=13)
-    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4 + (1 if have_contrib else 0))
 
     ws1.cell(row=2, column=1, value=f"Period: {start_date.strftime('%b %d, %Y')} — {end_date.strftime('%b %d, %Y')}")
     ws1.cell(row=2, column=1).font = Font(italic=True, size=9, color="666666")
 
     headers = ["Month", "Tokens", "Cost ($)", "Requests"]
+    if have_contrib:
+        headers.append("Contributions")
     for col_idx, h in enumerate(headers, 1):
         ws1.cell(row=4, column=col_idx, value=h)
     _style_header(ws1, 4, len(headers))
@@ -109,6 +134,8 @@ def generate_cost_excel(
         ws1.cell(row=row_idx, column=2, value=int(row["tokens"]))
         ws1.cell(row=row_idx, column=3, value=round(row["cost"], 4))
         ws1.cell(row=row_idx, column=4, value=int(row["requests"]))
+        if have_contrib:
+            ws1.cell(row=row_idx, column=5, value=int(row["contrib"]))
 
     if len(monthly) > 0:
         _style_data_rows(ws1, 5, 4 + len(monthly), len(headers))
@@ -123,26 +150,40 @@ def generate_cost_excel(
         .sort_values("cost", ascending=False)
     )
 
+    if have_contrib:
+        contrib_by_user = (
+            cdf.groupby("username", as_index=False)
+            .agg(contrib=("count", "sum"))
+        )
+        user_agg = user_agg.merge(contrib_by_user, on="username", how="left")
+        user_agg["contrib"] = user_agg["contrib"].fillna(0)
+
     ws2.cell(row=1, column=1, value="Per-User Cost Allocation")
     ws2.cell(row=1, column=1).font = Font(bold=True, size=13)
-    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5 + (1 if have_contrib else 0))
 
     ws2.cell(row=2, column=1, value=f"Period: {start_date.strftime('%b %d, %Y')} — {end_date.strftime('%b %d, %Y')}")
     ws2.cell(row=2, column=1).font = Font(italic=True, size=9, color="666666")
 
-    headers = ["User", "Tokens", "Cost ($)", "Requests"]
+    headers = ["S.No", "User", "Tokens", "Cost ($)", "Requests"]
+    if have_contrib:
+        headers.append("Contributions")
     for col_idx, h in enumerate(headers, 1):
         ws2.cell(row=4, column=col_idx, value=h)
     _style_header(ws2, 4, len(headers))
 
     for row_idx, (_, row) in enumerate(user_agg.iterrows(), 5):
-        ws2.cell(row=row_idx, column=1, value=row["username"])
-        ws2.cell(row=row_idx, column=2, value=int(row["tokens"]))
-        ws2.cell(row=row_idx, column=3, value=round(row["cost"], 4))
-        ws2.cell(row=row_idx, column=4, value=int(row["requests"]))
+        sno = row_idx - 4  # serial starting at 1
+        ws2.cell(row=row_idx, column=1, value=sno)
+        ws2.cell(row=row_idx, column=2, value=row["username"])
+        ws2.cell(row=row_idx, column=3, value=int(row["tokens"]))
+        ws2.cell(row=row_idx, column=4, value=round(row["cost"], 4))
+        ws2.cell(row=row_idx, column=5, value=int(row["requests"]))
+        if have_contrib:
+            ws2.cell(row=row_idx, column=6, value=int(row["contrib"]))
 
     if len(user_agg) > 0:
-        _style_data_rows(ws2, 5, 4 + len(user_agg), len(headers))
+        _style_data_rows(ws2, 5, 4 + len(user_agg), len(headers), left_cols=2)
     _auto_width(ws2, len(headers))
 
     # --- Sheet 3: Per-Model Breakdown ---
@@ -212,6 +253,33 @@ def generate_cost_excel(
     if len(raw) > 0:
         _style_data_rows(ws4, 5, 4 + len(raw), len(headers))
     _auto_width(ws4, len(headers))
+
+    # --- Sheet 5: Contributions (daily per-user detail) ---
+    if have_contrib:
+        ws5 = wb.create_sheet("Contributions")
+
+        contrib_sorted = cdf.sort_values(["username", "contribution_date"])
+
+        ws5.cell(row=1, column=1, value="Daily Contributions")
+        ws5.cell(row=1, column=1).font = Font(bold=True, size=13)
+        ws5.merge_cells(start_row=1, start_column=1, end_row=1, end_column=3)
+
+        ws5.cell(row=2, column=1, value=f"Period: {start_date.strftime('%b %d, %Y')} — {end_date.strftime('%b %d, %Y')}")
+        ws5.cell(row=2, column=1).font = Font(italic=True, size=9, color="666666")
+
+        headers = ["User", "Date", "Contributions"]
+        for col_idx, h in enumerate(headers, 1):
+            ws5.cell(row=4, column=col_idx, value=h)
+        _style_header(ws5, 4, len(headers))
+
+        for row_idx, (_, row) in enumerate(contrib_sorted.iterrows(), 5):
+            ws5.cell(row=row_idx, column=1, value=row["username"])
+            ws5.cell(row=row_idx, column=2, value=str(row["contribution_date"]))
+            ws5.cell(row=row_idx, column=3, value=int(row["count"]))
+
+        if len(contrib_sorted) > 0:
+            _style_data_rows(ws5, 5, 4 + len(contrib_sorted), len(headers))
+        _auto_width(ws5, len(headers))
 
     # Save to bytes
     buf = io.BytesIO()

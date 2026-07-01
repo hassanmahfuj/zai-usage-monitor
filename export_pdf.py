@@ -17,11 +17,111 @@ from reportlab.platypus import (
 )
 
 
+def _build_breakdown(
+    df: pd.DataFrame,
+    cdf: pd.DataFrame,
+    label: str,
+    group_col: str,
+    styles,
+    have_contrib: bool,
+    show_sno: bool = False,
+    sort_col: str = "cost",
+) -> list:
+    """Build a [Heading, Spacer, Table] flowable list for a breakdown table.
+
+    Args:
+        label: Display label for the group dimension (e.g. "Username").
+        group_col: DataFrame column to group by ("username", "billing_date",
+            or "model_code").
+        styles: reportlab stylesheet (for the Heading2 paragraph).
+        have_contrib: Whether cdf is non-empty (enables Contributions column).
+        show_sno: Prepend an "S.No" rank column.
+        sort_col: Column to sort descending by ("tokens" or "cost").
+    """
+    agg = (
+        df.groupby(group_col, as_index=False)
+        .agg(tokens=("token_usage", "sum"), cost=("cost", "sum"), requests=("requests", "sum"))
+        .sort_values(sort_col, ascending=False)
+    )
+
+    # Contributions can be attributed for Username or Date, not Model.
+    show_contrib_col = have_contrib and group_col in ("username", "billing_date")
+    if show_contrib_col:
+        if group_col == "username":
+            contrib_agg = cdf.groupby("username", as_index=False).agg(contrib=("count", "sum"))
+            agg = agg.merge(contrib_agg, left_on=group_col, right_on="username", how="left")
+        else:  # billing_date
+            contrib_agg = (
+                cdf.groupby("contribution_date", as_index=False).agg(contrib=("count", "sum"))
+            )
+            agg = agg.merge(
+                contrib_agg, left_on=group_col, right_on="contribution_date", how="left"
+            )
+        agg["contrib"] = agg["contrib"].fillna(0)
+
+    header = []
+    if show_sno:
+        header.append("S.No")
+    header.extend([label, "Tokens", "Cost ($)", "Requests"])
+    if show_contrib_col:
+        header.append("Contributions")
+
+    data = [header]
+    for idx, (_, row) in enumerate(agg.iterrows()):
+        row_vals = []
+        if show_sno:
+            row_vals.append(str(idx + 1))
+        row_vals.extend([
+            str(row[group_col]),
+            f"{int(row['tokens']):,}",
+            f"${row['cost']:,.4f}",
+            f"{int(row['requests']):,}",
+        ])
+        if show_contrib_col:
+            row_vals.append(f"{int(row['contrib']):,}")
+        data.append(row_vals)
+
+    if show_sno and show_contrib_col:
+        col_widths = [0.6 * inch, 1.7 * inch, 1.2 * inch, 1.1 * inch, 1.0 * inch, 1.1 * inch]
+    elif show_sno:
+        col_widths = [0.6 * inch, 2.0 * inch, 1.5 * inch, 1.3 * inch, 1.2 * inch]
+    elif show_contrib_col:
+        col_widths = [1.9 * inch, 1.3 * inch, 1.2 * inch, 1.1 * inch, 1.1 * inch]
+    else:
+        col_widths = [2.2 * inch, 1.5 * inch, 1.3 * inch, 1.2 * inch]
+
+    table = Table(data, colWidths=col_widths)
+    # Left-align the leading text columns (S.No + group label); right-align
+    # the numeric columns. The group label sits at index 1 when S.No is shown.
+    right_start = 2 if show_sno else 1
+    table.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("FONTSIZE", (0, 1), (-1, -1), 9),
+            ("ALIGN", (0, 0), (right_start - 1, -1), "LEFT"),
+            ("ALIGN", (right_start, 0), (-1, -1), "RIGHT"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#D6E4F0")]),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ])
+    )
+
+    return [
+        Paragraph(f"Breakdown by {label}", styles["Heading2"]),
+        Spacer(1, 0.15 * inch),
+        table,
+    ]
+
+
 def generate_summary_pdf(
     df: pd.DataFrame,
     start_date: date,
     end_date: date,
     group_by: str,
+    cdf: pd.DataFrame | None = None,
 ) -> bytes:
     """Generate a PDF summary report.
 
@@ -32,10 +132,17 @@ def generate_summary_pdf(
         start_date: Report period start date.
         end_date: Report period end date.
         group_by: Current group-by dimension (Date, Model, or Username).
+        cdf: Optional filtered contributions DataFrame with columns
+            username, contribution_date, count. When empty/None, no
+            contribution rows/columns are added.
 
     Returns:
         PDF file content as bytes.
     """
+    if cdf is None:
+        cdf = pd.DataFrame()
+    have_contrib = not cdf.empty
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=0.5 * inch, bottomMargin=0.5 * inch)
     styles = getSampleStyleSheet()
@@ -56,14 +163,17 @@ def generate_summary_pdf(
     total_tokens = int(df["token_usage"].sum())
     total_cost = df["cost"].sum()
     total_requests = int(df["requests"].sum())
+    total_contrib = int(cdf["count"].sum()) if have_contrib else 0
 
     kpi_data = [
         ["Metric", "Value"],
         ["Total Tokens", f"{total_tokens:,}"],
         ["Total Cost", f"${total_cost:,.4f}"],
         ["Total Requests", f"{total_requests:,}"],
-        ["Records", f"{len(df):,}"],
     ]
+    if have_contrib:
+        kpi_data.append(["Total Contributions", f"{total_contrib:,}"])
+    kpi_data.append(["Records", f"{len(df):,}"])
     kpi_table = Table(kpi_data, colWidths=[2.5 * inch, 3 * inch])
     kpi_table.setStyle(
         TableStyle([
@@ -80,44 +190,16 @@ def generate_summary_pdf(
     )
     elements.append(kpi_table)
 
-    # --- Page 2: Group-by summary ---
+    # --- Breakdown by {group_by} ---
     elements.append(Spacer(1, 0.4 * inch))
-    elements.append(Paragraph(f"Breakdown by {group_by}", styles["Heading2"]))
-    elements.append(Spacer(1, 0.15 * inch))
-
     group_map = {"Date": "billing_date", "Model": "model_code", "Username": "username"}
     group_col = group_map.get(group_by, "billing_date")
-
-    agg = (
-        df.groupby(group_col, as_index=False)
-        .agg(tokens=("token_usage", "sum"), cost=("cost", "sum"), requests=("requests", "sum"))
-        .sort_values("cost", ascending=False)
-    )
-
-    summary_data = [[group_by, "Tokens", "Cost ($)", "Requests"]]
-    for _, row in agg.iterrows():
-        summary_data.append([
-            str(row[group_col]),
-            f"{int(row['tokens']):,}",
-            f"${row['cost']:,.4f}",
-            f"{int(row['requests']):,}",
-        ])
-
-    summary_table = Table(summary_data, colWidths=[2.2 * inch, 1.5 * inch, 1.3 * inch, 1.2 * inch])
-    summary_table.setStyle(
-        TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTSIZE", (0, 0), (-1, 0), 10),
-            ("FONTSIZE", (0, 1), (-1, -1), 9),
-            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#D6E4F0")]),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ])
-    )
-    elements.append(summary_table)
+    show_sno = group_by == "Username"
+    sort_col = "tokens" if show_sno else "cost"
+    elements.extend(_build_breakdown(
+        df, cdf, group_by, group_col, styles,
+        have_contrib=have_contrib, show_sno=show_sno, sort_col=sort_col,
+    ))
 
     # --- Page 3: Token type breakdown ---
     elements.append(Spacer(1, 0.4 * inch))
@@ -153,6 +235,16 @@ def generate_summary_pdf(
         ])
     )
     elements.append(type_table)
+
+    # --- Breakdown by Username (always present) ---
+    # Skipped when group_by is already Username, to avoid duplicating the
+    # table earlier. Ranked by token usage with S.No.
+    if group_by != "Username":
+        elements.append(Spacer(1, 0.4 * inch))
+        elements.extend(_build_breakdown(
+            df, cdf, "Username", "username", styles,
+            have_contrib=have_contrib, show_sno=True, sort_col="tokens",
+        ))
 
     doc.build(elements)
     return buf.getvalue()

@@ -3,21 +3,54 @@
 Run with: streamlit run app.py
 """
 
+import calendar
 from datetime import date, timedelta
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from db import (
     get_distinct_models,
     get_distinct_usernames,
     get_filtered_data,
+    get_contributions_data,
 )
 from export_cost import generate_cost_excel
 from export_pdf import generate_summary_pdf
 from export_user import generate_user_pdf
 from zai_sync import sync
+from contrib_sync import sync_contributions
+
+
+def shift_month(d: date, delta: int) -> date:
+    """Return the first day of the month offset by `delta` months from `d`."""
+    idx = d.month - 1 + delta
+    year = d.year + idx // 12
+    month = idx % 12 + 1
+    return date(year, month, 1)
+
+
+def month_bounds(d: date) -> tuple[date, date]:
+    """Return (first_day, last_day) of the calendar month containing `d`."""
+    first = d.replace(day=1)
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return first, d.replace(day=last_day)
+
+
+def shift_range_key(key: str, delta: int) -> None:
+    """Callback: shift the month of the date range stored in st.session_state[key].
+
+    Runs on button click before the widget re-instantiates, so it may safely
+    overwrite the widget's own key.
+    """
+    current = st.session_state.get(key)
+    ref = current[0] if isinstance(current, (tuple, list)) else current
+    if ref is None:
+        ref = date.today().replace(day=1)
+    st.session_state[key] = month_bounds(shift_month(ref, delta))
+
 
 st.set_page_config(page_title="Z.ai Usage Monitor", layout="wide")
 st.title("Z.ai Usage Monitor")
@@ -28,14 +61,18 @@ st.title("Z.ai Usage Monitor")
 st.sidebar.header("Sync")
 
 sync_range = st.sidebar.date_input(
-    "Sync date range",
+    "Date range",
     value=(date.today().replace(day=1), date.today()),
     key="sync_range",
 )
 sync_start = sync_range[0] if isinstance(sync_range, (tuple, list)) else sync_range
 sync_end = sync_range[1] if isinstance(sync_range, (tuple, list)) and len(sync_range) > 1 else sync_start
 
-if st.sidebar.button("Sync now", type="primary"):
+_sync_prev, _sync_next = st.sidebar.columns(2)
+_sync_prev.button("Prev month", key="sync_prev_month", on_click=shift_range_key, args=("sync_range", -1))
+_sync_next.button("Next month", key="sync_next_month", on_click=shift_range_key, args=("sync_range", 1))
+
+if st.sidebar.button("Sync API Usage", type="primary"):
     try:
         customer_id = st.secrets["zai"]["customer_id"]
         token = st.secrets["zai"]["bearer_token"]
@@ -58,6 +95,36 @@ if st.sidebar.button("Sync now", type="primary"):
     )
     st.rerun()
 
+if st.sidebar.button("Sync Contributions", type="secondary"):
+    try:
+        gl = st.secrets["gitlab"]
+        gl_url = gl["base_url"]
+        gl_user = gl["admin_username"]
+        gl_pass = gl["admin_password"]
+    except (KeyError, FileNotFoundError):
+        st.sidebar.error(
+            "Missing secrets. Add [gitlab] with base_url, admin_username, "
+            "and admin_password to .streamlit/secrets.toml."
+        )
+        st.stop()
+
+    with st.sidebar.spinner("Syncing contributions..."):
+        csummary = sync_contributions(
+            sync_start, sync_end, gl_url, gl_user, gl_pass
+        )
+
+    if csummary.get("failed_users") == -1:
+        st.sidebar.error("GitLab login failed. Check [gitlab] credentials.")
+        st.stop()
+
+    st.sidebar.success(
+        f"Users processed: {csummary['users_processed']}  \n"
+        f"Date rows upserted: {csummary['dates_upserted']}  \n"
+        f"Skipped (no calendar): {csummary['skipped_no_calendar']}  \n"
+        f"Failed users: {csummary['failed_users']}"
+    )
+    st.rerun()
+
 # ---------------------------------------------------------------------------
 # Sidebar — Filter section
 # ---------------------------------------------------------------------------
@@ -70,6 +137,10 @@ filter_range = st.sidebar.date_input(
 )
 filter_start = filter_range[0] if isinstance(filter_range, (tuple, list)) else filter_range
 filter_end = filter_range[1] if isinstance(filter_range, (tuple, list)) and len(filter_range) > 1 else filter_start
+
+_filter_prev, _filter_next = st.sidebar.columns(2)
+_filter_prev.button("Prev month", key="filter_prev_month", on_click=shift_range_key, args=("filter_range", -1))
+_filter_next.button("Next month", key="filter_next_month", on_click=shift_range_key, args=("filter_range", 1))
 
 all_models = get_distinct_models()
 selected_models = st.sidebar.multiselect(
@@ -105,13 +176,22 @@ if df.empty:
     st.info("No data for the selected filters. Try syncing first.")
     st.stop()
 
+# Contributions data — shares the same date range and username filters.
+# Fetched separately from billing (separate table/source). May be empty if
+# the user has not run "Sync Contributions" yet.
+cdf = get_contributions_data(
+    start_date=str(filter_start),
+    end_date=str(filter_end),
+    usernames=selected_usernames if selected_usernames else None,
+)
+
 # ---------------------------------------------------------------------------
 # Sidebar — Export section
 # ---------------------------------------------------------------------------
 st.sidebar.header("Export Reports")
 
 if st.sidebar.button("Export Summary PDF"):
-    pdf_bytes = generate_summary_pdf(df, filter_start, filter_end, group_by)
+    pdf_bytes = generate_summary_pdf(df, filter_start, filter_end, group_by, cdf)
     st.sidebar.download_button(
         label="Download Summary PDF",
         data=pdf_bytes,
@@ -121,7 +201,7 @@ if st.sidebar.button("Export Summary PDF"):
     )
 
 if st.sidebar.button("Export Per-User Report"):
-    user_pdf = generate_user_pdf(df, filter_start, filter_end)
+    user_pdf = generate_user_pdf(df, filter_start, filter_end, cdf)
     st.sidebar.download_button(
         label="Download Per-User Report",
         data=user_pdf,
@@ -131,7 +211,7 @@ if st.sidebar.button("Export Per-User Report"):
     )
 
 if st.sidebar.button("Export Cost Allocation XLSX"):
-    cost_xlsx = generate_cost_excel(df, filter_start, filter_end)
+    cost_xlsx = generate_cost_excel(df, filter_start, filter_end, cdf)
     st.sidebar.download_button(
         label="Download Cost Allocation",
         data=cost_xlsx,
@@ -170,7 +250,7 @@ fig_tokens = px.bar(
     color_discrete_map={"INPUT": "#636EFA", "OUTPUT": "#EF553B", "CACHE": "#00CC96"},
 )
 fig_tokens.update_layout(xaxis_title=group_by, yaxis_title="Tokens")
-st.plotly_chart(fig_tokens, use_container_width=True)
+st.plotly_chart(fig_tokens, width="stretch")
 
 # Requests — bar
 req_agg = df.groupby(group_col, as_index=False)["requests"].sum()
@@ -182,7 +262,7 @@ fig_req = px.bar(
     color_discrete_sequence=["#FFA15A"],
 )
 fig_req.update_layout(xaxis_title=group_by, yaxis_title="Requests")
-st.plotly_chart(fig_req, use_container_width=True)
+st.plotly_chart(fig_req, width="stretch")
 
 # Cost — bar
 cost_agg = df.groupby(group_col, as_index=False)["cost"].sum()
@@ -194,7 +274,89 @@ fig_cost = px.bar(
     color_discrete_sequence=["#AB63FA"],
 )
 fig_cost.update_layout(xaxis_title=group_by, yaxis_title="Cost ($)")
-st.plotly_chart(fig_cost, use_container_width=True)
+st.plotly_chart(fig_cost, width="stretch")
+
+# ---------------------------------------------------------------------------
+# Tokens vs Contributions — per-user comparison (actual values)
+# ---------------------------------------------------------------------------
+if not cdf.empty:
+    tokens_per_user = (
+        df.groupby("username", as_index=False)["token_usage"].sum()
+    )
+    contrib_per_user = (
+        cdf.groupby("username", as_index=False)["count"].sum()
+    )
+    merged = tokens_per_user.merge(contrib_per_user, on="username", how="outer")
+    merged = merged.fillna(0).sort_values("token_usage", ascending=False)
+
+    # Dual y-axis, grouped bars: Tokens (left) vs Contributions (right)
+    fig_real = go.Figure()
+    fig_real.add_trace(go.Bar(
+        x=merged["username"],
+        y=merged["token_usage"],
+        name="Tokens",
+        yaxis="y",
+        offsetgroup=0,
+        marker_color="#636EFA",
+    ))
+    fig_real.add_trace(go.Bar(
+        x=merged["username"],
+        y=merged["count"],
+        name="Contributions",
+        yaxis="y2",
+        offsetgroup=1,
+        marker_color="#19A3A3",
+    ))
+    fig_real.update_layout(
+        title="Tokens vs Contributions",
+        barmode="group",
+        xaxis=dict(title="Username", tickangle=-45),
+        yaxis=dict(title="Tokens"),
+        yaxis2=dict(title="Contributions", overlaying="y", side="right"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_real, width="stretch")
+else:
+    st.info(
+        "No contribution data for the selected range. "
+        "Click **Sync Contributions** in the sidebar."
+    )
+
+# ---------------------------------------------------------------------------
+# Combined Leaderboard — per-user billing vs contributions
+# ---------------------------------------------------------------------------
+bill_per_user = (
+    df.groupby("username", as_index=False)
+    .agg(
+        Tokens=("token_usage", "sum"),
+        Requests=("requests", "sum"),
+        Cost=("cost", "sum"),
+    )
+)
+
+if not cdf.empty:
+    contrib_per_user = (
+        cdf.groupby("username", as_index=False)
+        .agg(Contributions=("count", "sum"))
+    )
+    leaderboard = bill_per_user.merge(contrib_per_user, on="username", how="outer")
+else:
+    leaderboard = bill_per_user.copy()
+    leaderboard["Contributions"] = 0
+
+leaderboard = leaderboard.fillna(0)
+leaderboard["Cost"] = leaderboard["Cost"].round(4)
+
+st.subheader("User Leaderboard")
+rank_by = st.selectbox(
+    "Rank by",
+    options=["Tokens", "Requests", "Cost", "Contributions"],
+    index=0,
+)
+leaderboard = leaderboard.sort_values(rank_by, ascending=False).reset_index(drop=True)
+leaderboard.insert(0, "#", range(1, len(leaderboard) + 1))
+
+st.dataframe(leaderboard, width="stretch", hide_index=True)
 
 # ---------------------------------------------------------------------------
 # Raw data (expandable)
@@ -204,4 +366,4 @@ with st.expander("Raw Data"):
         "billing_date", "username", "model_code", "token_type",
         "token_usage", "cost_price", "requests", "api_key", "billing_no",
     ]
-    st.dataframe(df[display_cols].sort_values("billing_date"), use_container_width=True)
+    st.dataframe(df[display_cols].sort_values("billing_date"), width="stretch")

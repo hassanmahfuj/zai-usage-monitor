@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS usage_records (
 CREATE INDEX IF NOT EXISTS idx_billing_date ON usage_records(billing_date);
 CREATE INDEX IF NOT EXISTS idx_billing_model ON usage_records(model_code);
 CREATE INDEX IF NOT EXISTS idx_billing_apikey ON usage_records(api_key);
+
+CREATE TABLE IF NOT EXISTS contributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL,
+    contribution_date DATE NOT NULL,
+    count INTEGER NOT NULL,
+    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(username, contribution_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_contrib_user ON contributions(username);
+CREATE INDEX IF NOT EXISTS idx_contrib_date ON contributions(contribution_date);
 """
 
 
@@ -80,6 +92,22 @@ def get_distinct_usernames() -> list[str]:
         conn.close()
 
 
+def get_mapped_usernames() -> list[str]:
+    """Return sorted list of usernames from api_key_map (excludes 'Unknown').
+
+    Used by the contribution sync, which needs real GitLab usernames to
+    fetch each user's calendar.json.
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute(
+            "SELECT DISTINCT username FROM api_key_map ORDER BY username"
+        )
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+
 def get_filtered_data(
     start_date: str,
     end_date: str,
@@ -117,6 +145,41 @@ def get_filtered_data(
     if usernames:
         placeholders = ", ".join(f":u{i}" for i in range(len(usernames)))
         query += f" AND COALESCE(m.username, 'Unknown') IN ({placeholders})"
+        for i, u in enumerate(usernames):
+            params[f"u{i}"] = u
+
+    conn = get_conn()
+    try:
+        return pd.read_sql_query(query, conn, params=params)
+    finally:
+        conn.close()
+
+
+def get_contributions_data(
+    start_date: str,
+    end_date: str,
+    usernames: list[str] | None = None,
+) -> pd.DataFrame:
+    """Return filtered contribution records as a DataFrame.
+
+    Args:
+        start_date: Start date string (YYYY-MM-DD), inclusive.
+        end_date: End date string (YYYY-MM-DD), inclusive.
+        usernames: Optional list of usernames to filter by.
+
+    Returns:
+        DataFrame with columns: username, contribution_date, count.
+    """
+    query = (
+        "SELECT username, contribution_date, count "
+        "FROM contributions "
+        "WHERE contribution_date BETWEEN :start AND :end"
+    )
+    params: dict = {"start": start_date, "end": end_date}
+
+    if usernames:
+        placeholders = ", ".join(f":u{i}" for i in range(len(usernames)))
+        query += f" AND username IN ({placeholders})"
         for i, u in enumerate(usernames):
             params[f"u{i}"] = u
 
