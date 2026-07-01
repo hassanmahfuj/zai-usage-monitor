@@ -27,11 +27,13 @@ st.title("Z.ai Usage Monitor")
 # ---------------------------------------------------------------------------
 st.sidebar.header("Sync")
 
-sync_start, sync_end = st.sidebar.date_input(
+sync_range = st.sidebar.date_input(
     "Sync date range",
     value=(date.today().replace(day=1), date.today()),
     key="sync_range",
 )
+sync_start = sync_range[0] if isinstance(sync_range, (tuple, list)) else sync_range
+sync_end = sync_range[1] if isinstance(sync_range, (tuple, list)) and len(sync_range) > 1 else sync_start
 
 if st.sidebar.button("Sync now", type="primary"):
     try:
@@ -61,11 +63,13 @@ if st.sidebar.button("Sync now", type="primary"):
 # ---------------------------------------------------------------------------
 st.sidebar.header("Filters")
 
-filter_start, filter_end = st.sidebar.date_input(
+filter_range = st.sidebar.date_input(
     "Date range",
     value=(date.today() - timedelta(days=30), date.today()),
     key="filter_range",
 )
+filter_start = filter_range[0] if isinstance(filter_range, (tuple, list)) else filter_range
+filter_end = filter_range[1] if isinstance(filter_range, (tuple, list)) and len(filter_range) > 1 else filter_start
 
 all_models = get_distinct_models()
 selected_models = st.sidebar.multiselect(
@@ -138,8 +142,8 @@ if st.sidebar.button("Export Cost Allocation XLSX"):
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Total Tokens", f"{int(df['token_usage'].sum()):,}")
-col2.metric("Total Cost", f"${df['cost'].sum():,.4f}")
-col3.metric("Total Requests", f"{int(df['requests'].sum()):,}")
+col2.metric("Total Requests", f"{int(df['requests'].sum()):,}")
+col3.metric("Total Cost", f"${df['cost'].sum():,.4f}")
 
 # ---------------------------------------------------------------------------
 # Main area — Charts
@@ -161,7 +165,7 @@ fig_tokens = px.bar(
     x=group_col,
     y="token_usage",
     color="token_type",
-    title="Token Usage",
+    title="Tokens",
     barmode="stack",
     color_discrete_map={"INPUT": "#636EFA", "OUTPUT": "#EF553B", "CACHE": "#00CC96"},
 )
@@ -186,7 +190,7 @@ fig_cost = px.bar(
     cost_agg,
     x=group_col,
     y="cost",
-    title="Cost",
+    title="Costs",
     color_discrete_sequence=["#AB63FA"],
 )
 fig_cost.update_layout(xaxis_title=group_by, yaxis_title="Cost ($)")

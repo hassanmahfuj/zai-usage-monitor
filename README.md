@@ -34,13 +34,16 @@ customer_id = "YOUR_CUSTOMER_ID"
 bearer_token = "YOUR_BEARER_TOKEN"
 ```
 
-### 3. (Optional) Seed API key mappings
+### 3. Seed API key mappings
 
-Edit the `API_KEY_MAPPINGS` dict in `seed_api_keys.py` to map masked API keys to usernames, then run:
+Open `seed_api_keys.py` and fill in the three config values at the top (`ORG_ID`, `PROJECT_ID`, `BEARER_TOKEN`), then run:
 
 ```bash
-python seed_api_keys.py
+python seed_api_keys.py              # fetch and insert into the database
+python seed_api_keys.py --dry-run    # preview without inserting
 ```
+
+Re-running is safe — duplicate API keys are ignored. The script skips hidden keys and maps each user's name to their masked API key automatically.
 
 ## Usage
 
