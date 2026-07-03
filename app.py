@@ -4,6 +4,7 @@ Run with: streamlit run app.py
 """
 
 import calendar
+import math
 from datetime import date, timedelta
 
 import pandas as pd
@@ -18,8 +19,8 @@ from db import (
     get_contributions_data,
 )
 from export_cost import generate_cost_excel
-from export_pdf import generate_summary_pdf
-from export_user import generate_user_pdf
+from export_report import generate_report_pdf
+from formatting import fmt_tokens
 from zai_sync import sync
 from contrib_sync import sync_contributions
 
@@ -52,91 +53,111 @@ def shift_range_key(key: str, delta: int) -> None:
     st.session_state[key] = month_bounds(shift_month(ref, delta))
 
 
+def token_axis(max_val: float, n_ticks: int = 5) -> dict:
+    """Return Plotly yaxis tickvals/ticktext kwargs formatting tokens as K/M/B."""
+    max_val = float(max_val or 0)
+    if max_val <= 0:
+        return {}
+    raw = max_val / n_ticks
+    mag = 10 ** math.floor(math.log10(raw)) if raw > 0 else 1
+    norm = raw / mag
+    if norm < 1.5:
+        step = mag
+    elif norm < 3:
+        step = 2 * mag
+    elif norm < 7:
+        step = 5 * mag
+    else:
+        step = 10 * mag
+    vals = list(range(0, int(max_val) + step, step))
+    return dict(tickvals=vals, ticktext=[fmt_tokens(v) for v in vals])
+
+
 st.set_page_config(page_title="Z.ai Usage Monitor", layout="wide")
 st.title("Z.ai Usage Monitor")
+date_range_display = st.empty()
 
 # ---------------------------------------------------------------------------
 # Sidebar — Sync section
 # ---------------------------------------------------------------------------
 st.sidebar.header("Sync")
 
-sync_range = st.sidebar.date_input(
-    "Date range",
-    value=(date.today().replace(day=1), date.today()),
-    key="sync_range",
-)
-sync_start = sync_range[0] if isinstance(sync_range, (tuple, list)) else sync_range
-sync_end = sync_range[1] if isinstance(sync_range, (tuple, list)) and len(sync_range) > 1 else sync_start
+with st.sidebar.expander("API Usage & Contributions Sync"):
+    if "sync_range" not in st.session_state:
+        st.session_state["sync_range"] = (date.today().replace(day=1), date.today())
+    sync_range = st.date_input("Date range", key="sync_range")
+    sync_start = sync_range[0] if isinstance(sync_range, (tuple, list)) else sync_range
+    sync_end = sync_range[1] if isinstance(sync_range, (tuple, list)) and len(sync_range) > 1 else sync_start
 
-_sync_prev, _sync_next = st.sidebar.columns(2)
-_sync_prev.button("Prev month", key="sync_prev_month", on_click=shift_range_key, args=("sync_range", -1))
-_sync_next.button("Next month", key="sync_next_month", on_click=shift_range_key, args=("sync_range", 1))
+    _sync_prev, _sync_next = st.columns(2)
+    _sync_prev.button("Prev month", key="sync_prev_month", on_click=shift_range_key, args=("sync_range", -1))
+    _sync_next.button("Next month", key="sync_next_month", on_click=shift_range_key, args=("sync_range", 1))
 
-if st.sidebar.button("Sync API Usage", type="primary"):
-    try:
-        customer_id = st.secrets["zai"]["customer_id"]
-        token = st.secrets["zai"]["bearer_token"]
-    except (KeyError, FileNotFoundError):
-        st.sidebar.error(
-            "Missing secrets. Add customer_id and bearer_token to "
-            ".streamlit/secrets.toml under [zai]."
+    if st.button("Sync API Usage", type="primary"):
+        try:
+            customer_id = st.secrets["zai"]["customer_id"]
+            token = st.secrets["zai"]["api_key"]
+        except (KeyError, FileNotFoundError):
+            st.error(
+                "Missing secrets. Add customer_id and api_key to "
+                ".streamlit/secrets.toml under [zai]."
+            )
+            st.stop()
+
+        with st.spinner("Syncing..."):
+            summary = sync(sync_start, sync_end, customer_id, token)
+
+        st.success(
+            f"Months: {summary['months_processed']}  \n"
+            f"Fetched: {summary['fetched']}  \n"
+            f"New rows: {summary['inserted']}  \n"
+            f"Skipped (out of range): {summary['skipped_out_of_range']}  \n"
+            f"Failed pages: {summary['failed_pages']}"
         )
-        st.stop()
+        st.rerun()
 
-    with st.sidebar.spinner("Syncing..."):
-        summary = sync(sync_start, sync_end, customer_id, token)
+    if st.button("Sync Contributions", type="secondary"):
+        try:
+            gl = st.secrets["gitlab"]
+            gl_url = gl["base_url"]
+            gl_user = gl["admin_username"]
+            gl_pass = gl["admin_password"]
+        except (KeyError, FileNotFoundError):
+            st.error(
+                "Missing secrets. Add [gitlab] with base_url, admin_username, "
+                "and admin_password to .streamlit/secrets.toml."
+            )
+            st.stop()
 
-    st.sidebar.success(
-        f"Months: {summary['months_processed']}  \n"
-        f"Fetched: {summary['fetched']}  \n"
-        f"New rows: {summary['inserted']}  \n"
-        f"Skipped (out of range): {summary['skipped_out_of_range']}  \n"
-        f"Failed pages: {summary['failed_pages']}"
-    )
-    st.rerun()
+        with st.spinner("Syncing contributions..."):
+            csummary = sync_contributions(
+                sync_start, sync_end, gl_url, gl_user, gl_pass
+            )
 
-if st.sidebar.button("Sync Contributions", type="secondary"):
-    try:
-        gl = st.secrets["gitlab"]
-        gl_url = gl["base_url"]
-        gl_user = gl["admin_username"]
-        gl_pass = gl["admin_password"]
-    except (KeyError, FileNotFoundError):
-        st.sidebar.error(
-            "Missing secrets. Add [gitlab] with base_url, admin_username, "
-            "and admin_password to .streamlit/secrets.toml."
+        if csummary.get("failed_users") == -1:
+            st.error("GitLab login failed. Check [gitlab] credentials.")
+            st.stop()
+
+        st.success(
+            f"Users processed: {csummary['users_processed']}  \n"
+            f"Date rows upserted: {csummary['dates_upserted']}  \n"
+            f"Skipped (no calendar): {csummary['skipped_no_calendar']}  \n"
+            f"Failed users: {csummary['failed_users']}"
         )
-        st.stop()
-
-    with st.sidebar.spinner("Syncing contributions..."):
-        csummary = sync_contributions(
-            sync_start, sync_end, gl_url, gl_user, gl_pass
-        )
-
-    if csummary.get("failed_users") == -1:
-        st.sidebar.error("GitLab login failed. Check [gitlab] credentials.")
-        st.stop()
-
-    st.sidebar.success(
-        f"Users processed: {csummary['users_processed']}  \n"
-        f"Date rows upserted: {csummary['dates_upserted']}  \n"
-        f"Skipped (no calendar): {csummary['skipped_no_calendar']}  \n"
-        f"Failed users: {csummary['failed_users']}"
-    )
-    st.rerun()
+        st.rerun()
 
 # ---------------------------------------------------------------------------
 # Sidebar — Filter section
 # ---------------------------------------------------------------------------
 st.sidebar.header("Filters")
 
-filter_range = st.sidebar.date_input(
-    "Date range",
-    value=(date.today() - timedelta(days=30), date.today()),
-    key="filter_range",
-)
+if "filter_range" not in st.session_state:
+    st.session_state["filter_range"] = (date.today().replace(day=1), date.today())
+filter_range = st.sidebar.date_input("Date range", key="filter_range")
 filter_start = filter_range[0] if isinstance(filter_range, (tuple, list)) else filter_range
 filter_end = filter_range[1] if isinstance(filter_range, (tuple, list)) and len(filter_range) > 1 else filter_start
+
+date_range_display.caption(f"Showing {filter_start} to {filter_end}")
 
 _filter_prev, _filter_next = st.sidebar.columns(2)
 _filter_prev.button("Prev month", key="filter_prev_month", on_click=shift_range_key, args=("filter_range", -1))
@@ -159,7 +180,7 @@ selected_usernames = st.sidebar.multiselect(
 group_by = st.sidebar.radio(
     "Group by",
     options=["Date", "Model", "Username"],
-    index=0,
+    index=2,
 )
 
 # ---------------------------------------------------------------------------
@@ -190,24 +211,14 @@ cdf = get_contributions_data(
 # ---------------------------------------------------------------------------
 st.sidebar.header("Export Reports")
 
-if st.sidebar.button("Export Summary PDF"):
-    pdf_bytes = generate_summary_pdf(df, filter_start, filter_end, group_by, cdf)
+if st.sidebar.button("Export Report"):
+    pdf_bytes = generate_report_pdf(df, filter_start, filter_end, cdf)
     st.sidebar.download_button(
-        label="Download Summary PDF",
+        label="Download Report (PDF)",
         data=pdf_bytes,
-        file_name=f"zai_summary_{filter_start}_{filter_end}.pdf",
+        file_name=f"zai_report_{filter_start}_{filter_end}.pdf",
         mime="application/pdf",
-        key="dl_summary_pdf",
-    )
-
-if st.sidebar.button("Export Per-User Report"):
-    user_pdf = generate_user_pdf(df, filter_start, filter_end, cdf)
-    st.sidebar.download_button(
-        label="Download Per-User Report",
-        data=user_pdf,
-        file_name=f"zai_users_{filter_start}_{filter_end}.pdf",
-        mime="application/pdf",
-        key="dl_user_pdf",
+        key="dl_report_pdf",
     )
 
 if st.sidebar.button("Export Cost Allocation XLSX"):
@@ -221,7 +232,7 @@ if st.sidebar.button("Export Cost Allocation XLSX"):
     )
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Total Tokens", f"{int(df['token_usage'].sum()):,}")
+col1.metric("Total Tokens", fmt_tokens(df['token_usage'].sum()))
 col2.metric("Total Requests", f"{int(df['requests'].sum()):,}")
 col3.metric("Total Cost", f"${df['cost'].sum():,.4f}")
 
@@ -240,6 +251,7 @@ token_agg = (
     df.groupby([group_col, "token_type"], as_index=False)["token_usage"]
     .sum()
 )
+token_agg["tokens_display"] = token_agg["token_usage"].apply(fmt_tokens)
 fig_tokens = px.bar(
     token_agg,
     x=group_col,
@@ -248,8 +260,12 @@ fig_tokens = px.bar(
     title="Tokens",
     barmode="stack",
     color_discrete_map={"INPUT": "#636EFA", "OUTPUT": "#EF553B", "CACHE": "#00CC96"},
+    custom_data=["tokens_display"],
 )
+_stack_max = token_agg.groupby(group_col)["token_usage"].sum().max()
 fig_tokens.update_layout(xaxis_title=group_by, yaxis_title="Tokens")
+fig_tokens.update_traces(hovertemplate=f"{group_by}=%{{x}}<br>Tokens=%{{customdata[0]}}<extra>%{{fullData.name}}</extra>")
+fig_tokens.update_yaxes(**token_axis(_stack_max))
 st.plotly_chart(fig_tokens, width="stretch")
 
 # Requests — bar
@@ -288,6 +304,7 @@ if not cdf.empty:
     )
     merged = tokens_per_user.merge(contrib_per_user, on="username", how="outer")
     merged = merged.fillna(0).sort_values("token_usage", ascending=False)
+    merged["tokens_display"] = merged["token_usage"].apply(fmt_tokens)
 
     # Dual y-axis, grouped bars: Tokens (left) vs Contributions (right)
     fig_real = go.Figure()
@@ -298,6 +315,8 @@ if not cdf.empty:
         yaxis="y",
         offsetgroup=0,
         marker_color="#636EFA",
+        customdata=merged[["tokens_display"]],
+        hovertemplate="Username=%{x}<br>Tokens=%{customdata[0]}<extra>%{fullData.name}</extra>",
     ))
     fig_real.add_trace(go.Bar(
         x=merged["username"],
@@ -315,6 +334,7 @@ if not cdf.empty:
         yaxis2=dict(title="Contributions", overlaying="y", side="right"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
+    fig_real.update_yaxes(**token_axis(merged["token_usage"].max()))
     st.plotly_chart(fig_real, width="stretch")
 else:
     st.info(
@@ -355,8 +375,14 @@ rank_by = st.selectbox(
 )
 leaderboard = leaderboard.sort_values(rank_by, ascending=False).reset_index(drop=True)
 leaderboard.insert(0, "#", range(1, len(leaderboard) + 1))
+leaderboard["Tokens"] = leaderboard["Tokens"].apply(fmt_tokens)
 
-st.dataframe(leaderboard, width="stretch", hide_index=True)
+st.dataframe(
+    leaderboard,
+    width="stretch",
+    hide_index=True,
+    column_config={"Tokens": st.column_config.TextColumn(alignment="right")},
+)
 
 # ---------------------------------------------------------------------------
 # Raw data (expandable)
@@ -366,4 +392,6 @@ with st.expander("Raw Data"):
         "billing_date", "username", "model_code", "token_type",
         "token_usage", "cost_price", "requests", "api_key", "billing_no",
     ]
-    st.dataframe(df[display_cols].sort_values("billing_date"), width="stretch")
+    raw_display = df[display_cols].sort_values("billing_date").copy()
+    raw_display["token_usage"] = raw_display["token_usage"].apply(fmt_tokens)
+    st.dataframe(raw_display, width="stretch")

@@ -5,20 +5,46 @@ Run manually by an admin:
     python seed_api_keys.py --dry-run   # preview without inserting
 
 Re-running is safe — INSERT OR IGNORE skips existing api_key entries.
+
+Credentials (org_id, project_id, bearer_token) live in
+.streamlit/secrets.toml under the [zai] section.
 """
 
 import sys
+import tomllib
+from pathlib import Path
 
 import requests
 
 from db import get_conn
 
 # ---------------------------------------------------------------------------
-# CONFIG — replace placeholders with real values
+# CONFIG — loaded from .streamlit/secrets.toml ([zai])
 # ---------------------------------------------------------------------------
-ORG_ID = "org-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-PROJECT_ID = "proj_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
-BEARER_TOKEN = "YOUR_LOGIN_BEARER_TOKEN_HERE"
+
+
+def _load_seed_secrets() -> dict:
+    """Read org_id/project_id/bearer_token from .streamlit/secrets.toml."""
+    secrets_path = Path(__file__).resolve().parent / ".streamlit" / "secrets.toml"
+    if not secrets_path.exists():
+        raise SystemExit(
+            f"Missing {secrets_path}. Add a [zai] section with "
+            "org_id, project_id, and bearer_token."
+        )
+    with open(secrets_path, "rb") as fh:
+        section = tomllib.load(fh).get("zai", {})
+    missing = [k for k in ("org_id", "project_id", "bearer_token") if not section.get(k)]
+    if missing:
+        raise SystemExit(
+            f"secrets.toml [zai] missing: {', '.join(missing)}."
+        )
+    return section
+
+
+_seed = _load_seed_secrets()
+ORG_ID = _seed["org_id"]
+PROJECT_ID = _seed["project_id"]
+BEARER_TOKEN = _seed["bearer_token"]
 API_KEYS_URL = (
     f"https://api.z.ai/api/biz/v1/organization/{ORG_ID}"
     f"/projects/{PROJECT_ID}/api_keys?keyType=1"

@@ -16,6 +16,8 @@ from reportlab.platypus import (
     Spacer,
 )
 
+from formatting import fmt_tokens
+
 
 def _build_breakdown(
     df: pd.DataFrame,
@@ -73,7 +75,7 @@ def _build_breakdown(
             row_vals.append(str(idx + 1))
         row_vals.extend([
             str(row[group_col]),
-            f"{int(row['tokens']):,}",
+            fmt_tokens(row['tokens']),
             f"${row['cost']:,.4f}",
             f"{int(row['requests']):,}",
         ])
@@ -167,7 +169,7 @@ def generate_summary_pdf(
 
     kpi_data = [
         ["Metric", "Value"],
-        ["Total Tokens", f"{total_tokens:,}"],
+        ["Total Tokens", fmt_tokens(total_tokens)],
         ["Total Cost", f"${total_cost:,.4f}"],
         ["Total Requests", f"{total_requests:,}"],
     ]
@@ -216,7 +218,7 @@ def generate_summary_pdf(
     for _, row in type_agg.iterrows():
         type_data.append([
             str(row["token_type"]),
-            f"{int(row['tokens']):,}",
+            fmt_tokens(row['tokens']),
             f"${row['cost']:,.4f}",
         ])
 

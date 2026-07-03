@@ -8,6 +8,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from formatting import TOKEN_NUMFMT
+
 
 def _style_header(ws, row: int, ncols: int) -> None:
     """Apply header styling to a row."""
@@ -131,7 +133,8 @@ def generate_cost_excel(
 
     for row_idx, (_, row) in enumerate(monthly.iterrows(), 5):
         ws1.cell(row=row_idx, column=1, value=row["month"])
-        ws1.cell(row=row_idx, column=2, value=int(row["tokens"]))
+        _tok = ws1.cell(row=row_idx, column=2, value=int(row["tokens"]))
+        _tok.number_format = TOKEN_NUMFMT
         ws1.cell(row=row_idx, column=3, value=round(row["cost"], 4))
         ws1.cell(row=row_idx, column=4, value=int(row["requests"]))
         if have_contrib:
@@ -176,7 +179,8 @@ def generate_cost_excel(
         sno = row_idx - 4  # serial starting at 1
         ws2.cell(row=row_idx, column=1, value=sno)
         ws2.cell(row=row_idx, column=2, value=row["username"])
-        ws2.cell(row=row_idx, column=3, value=int(row["tokens"]))
+        _tok = ws2.cell(row=row_idx, column=3, value=int(row["tokens"]))
+        _tok.number_format = TOKEN_NUMFMT
         ws2.cell(row=row_idx, column=4, value=round(row["cost"], 4))
         ws2.cell(row=row_idx, column=5, value=int(row["requests"]))
         if have_contrib:
@@ -209,7 +213,8 @@ def generate_cost_excel(
 
     for row_idx, (_, row) in enumerate(model_agg.iterrows(), 5):
         ws3.cell(row=row_idx, column=1, value=row["model_code"])
-        ws3.cell(row=row_idx, column=2, value=int(row["tokens"]))
+        _tok = ws3.cell(row=row_idx, column=2, value=int(row["tokens"]))
+        _tok.number_format = TOKEN_NUMFMT
         ws3.cell(row=row_idx, column=3, value=round(row["cost"], 4))
         ws3.cell(row=row_idx, column=4, value=int(row["requests"]))
 
@@ -248,7 +253,9 @@ def generate_cost_excel(
                 val = int(val)
             elif col_name in ("cost_price", "cost"):
                 val = round(val, 4) if pd.notna(val) else 0
-            ws4.cell(row=row_idx, column=col_idx, value=val)
+            _cell = ws4.cell(row=row_idx, column=col_idx, value=val)
+            if col_name == "token_usage":
+                _cell.number_format = TOKEN_NUMFMT
 
     if len(raw) > 0:
         _style_data_rows(ws4, 5, 4 + len(raw), len(headers))

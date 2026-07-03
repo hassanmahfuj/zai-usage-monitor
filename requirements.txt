@@ -3,5 +3,6 @@ requests
 pandas
 plotly
 reportlab
+matplotlib
 openpyxl
 beautifulsoup4
