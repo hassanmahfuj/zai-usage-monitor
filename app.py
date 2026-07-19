@@ -20,6 +20,8 @@ from db import (
 )
 from export_cost import generate_cost_excel
 from export_report import generate_report_pdf
+from export_slides import generate_renewal_slides
+from generate_management_report import generate_management_report_pdf
 from formatting import fmt_tokens
 from zai_sync import sync
 from contrib_sync import sync_contributions
@@ -229,6 +231,73 @@ if st.sidebar.button("Export Cost Allocation XLSX"):
         file_name=f"zai_cost_{filter_start}_{filter_end}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dl_cost_xlsx",
+    )
+
+# Renewal deck — for the "convince the manager" business case. Set the filter
+# to the full package period (e.g. Feb–Jun) before exporting so totals reflect
+# the whole package window. Package cost drives the ROI multiplier.
+st.sidebar.subheader("Renewal Deck")
+try:
+    _default_pkg = float(st.secrets.get("renewal", {}).get("package_cost", 80.0))
+except (TypeError, ValueError):
+    _default_pkg = 80.0
+package_cost = st.sidebar.number_input(
+    "Package cost (USD)",
+    min_value=0.0,
+    value=_default_pkg,
+    step=10.0,
+    help="Flat price paid for the Z.ai package. Drives the ROI multiplier "
+         "and per-contribution cost on the renewal slides.",
+)
+if st.sidebar.button("Generate Renewal Slides", type="primary"):
+    with st.spinner("Building renewal deck..."):
+        html_bytes, zip_bytes = generate_renewal_slides(
+            df, filter_start, filter_end, cdf,
+            package_cost=package_cost,
+        )
+    st.session_state["_renewal_html"] = html_bytes
+    st.session_state["_renewal_zip"] = zip_bytes
+    st.session_state["_renewal_period"] = (filter_start, filter_end)
+
+if "_renewal_html" in st.session_state:
+    _p = st.session_state["_renewal_period"]
+    st.sidebar.download_button(
+        label="Download Renewal Deck (HTML)",
+        data=st.session_state["_renewal_html"],
+        file_name=f"zai_renewal_{_p[0]}_{_p[1]}.html",
+        mime="text/html",
+        key="dl_renewal_html",
+        help="Self-contained slide deck — emailable, printable (Ctrl/⌘+P).",
+    )
+    st.sidebar.download_button(
+        label="Download Charts (PNG ZIP)",
+        data=st.session_state["_renewal_zip"],
+        file_name=f"zai_renewal_{_p[0]}_{_p[1]}_charts.zip",
+        mime="application/zip",
+        key="dl_renewal_zip",
+        help="Individual chart PNGs — drop into Google Slides / PowerPoint.",
+    )
+
+# Management report — the 2-page manager-facing PDF (cover + success stories
+# + charts). Shares the package_cost above; set the filter to the full package
+# period (e.g. Feb–Jun) before generating.
+if st.sidebar.button("Generate Management Report PDF"):
+    with st.spinner("Building management report..."):
+        _mgmt_pdf = generate_management_report_pdf(
+            df, str(filter_start), str(filter_end), package_cost,
+        )
+    st.session_state["_mgmt_pdf"] = _mgmt_pdf
+    st.session_state["_mgmt_period"] = (filter_start, filter_end)
+
+if "_mgmt_pdf" in st.session_state:
+    _mp = st.session_state["_mgmt_period"]
+    st.sidebar.download_button(
+        label="Download Management Report (PDF)",
+        data=st.session_state["_mgmt_pdf"],
+        file_name=f"zai_management_report_{_mp[0]}_{_mp[1]}.pdf",
+        mime="application/pdf",
+        key="dl_mgmt_pdf",
+        help="2-page manager PDF — cover, success stories, usage charts.",
     )
 
 col1, col2, col3 = st.columns(3)

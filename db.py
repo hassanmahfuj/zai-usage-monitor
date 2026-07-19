@@ -92,6 +92,20 @@ def get_distinct_usernames() -> list[str]:
         conn.close()
 
 
+def get_provisioned_user_count() -> int:
+    """Return the number of distinct users in api_key_map.
+
+    Used by the renewal deck's adoption funnel — the pool of users who were
+    provisioned (regardless of whether they actually used the API).
+    """
+    conn = get_conn()
+    try:
+        cur = conn.execute("SELECT COUNT(DISTINCT username) FROM api_key_map")
+        return int(cur.fetchone()[0])
+    finally:
+        conn.close()
+
+
 def get_mapped_usernames() -> list[str]:
     """Return sorted list of usernames from api_key_map (excludes 'Unknown').
 
