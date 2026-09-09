@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 import requests
 
-from db import get_conn
+from db import get_conn, mask_api_key
 
 API_BASE = "https://api.z.ai/api/platform-charge-zai/bill/day"
 PAGE_SIZE = 100
@@ -70,7 +70,11 @@ def fetch_billing_period(
 
 
 def upsert_records(records: list[dict]) -> int:
-    """Insert billing records, ignoring duplicates. Returns count of new rows."""
+    """Insert billing records, ignoring duplicates. Returns count of new rows.
+
+    API keys are masked to first-4...last-4 to match api_key_map, since the
+    billing API now returns full keys.
+    """
     sql = """
     INSERT OR IGNORE INTO usage_records
         (billing_no, billing_date, api_key, model_code, cost_price,
@@ -86,7 +90,7 @@ def upsert_records(records: list[dict]) -> int:
             cur = conn.execute(sql, (
                 str(r["billingNo"]),
                 r["billingDate"],
-                r["apiKey"],
+                mask_api_key(str(r["apiKey"])),
                 r["modelCode"],
                 r.get("costPrice"),
                 r.get("usageCount"),

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from db import get_conn
+from db import get_conn, mask_api_key
 
 # ---------------------------------------------------------------------------
 # CONFIG — loaded from .streamlit/secrets.toml ([zai])
@@ -56,13 +56,6 @@ VALUES (?, ?)
 """
 
 
-def _mask_key(api_key: str) -> str:
-    """Return first-4 + '...' + last-4 mask of an API key."""
-    if len(api_key) <= 8:
-        return api_key
-    return f"{api_key[:4]}...{api_key[-4:]}"
-
-
 def fetch_api_keys(token: str) -> list[dict]:
     """Fetch the API key list from Z.ai."""
     headers = {"Authorization": f"Bearer {token}"}
@@ -93,7 +86,7 @@ def seed(dry_run: bool = False) -> int:
         if not api_key:
             skipped += 1
             continue
-        mappings.append((name.split("@")[0], _mask_key(api_key)))
+        mappings.append((name.split("@")[0], mask_api_key(api_key)))
 
     if dry_run:
         print(f"\n[dry-run] Would insert {len(mappings)} mapping(s) ({skipped} skipped):")

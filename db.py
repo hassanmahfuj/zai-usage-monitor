@@ -48,6 +48,18 @@ CREATE INDEX IF NOT EXISTS idx_contrib_date ON contributions(contribution_date);
 """
 
 
+def mask_api_key(api_key: str) -> str:
+    """Return first-4 + '...' + last-4 mask of an API key.
+
+    The billing API returns full keys, but api_key_map stores masked keys,
+    so usage_records must store the same mask for the username join to work.
+    Idempotent: an already-masked key passes through unchanged.
+    """
+    if len(api_key) <= 8:
+        return api_key
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
 def get_conn() -> sqlite3.Connection:
     """Return a connection to the SQLite database, creating it if needed."""
     DB_DIR.mkdir(parents=True, exist_ok=True)
