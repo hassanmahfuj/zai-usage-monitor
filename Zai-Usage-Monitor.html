@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Z.ai Usage Dashboard</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --muted:          #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-tokens:  #2a78d6;
+    --series-cost:    #eb6834;
+    --status-serious: #ec835a;
+    --accent-bg:      #2a78d6;
+    --accent-ink:     #ffffff;
+    --ghost-hover:    rgba(11,11,11,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .viz-root { max-width: 1080px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  header.top { margin-bottom: 16px; }
+  h1 { font-size: 20px; font-weight: 650; margin: 0; }
+  .sub { color: var(--text-secondary); margin: 2px 0 0; font-size: 13px; }
+
+  /* ---- filter row: one row, above everything it scopes ---- */
+  .filters {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 10px;
+  }
+  .filters label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+  .filters input {
+    font: inherit; color: var(--text-primary); background: var(--page);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px;
+  }
+  .filters input:focus-visible { outline: 2px solid var(--series-tokens); outline-offset: 1px; }
+  .filters input[type="password"] { width: 150px; }
+
+  /* ---- custom dd/MM/yyyy date picker ---- */
+  .dp { position: relative; display: inline-flex; align-items: center; }
+  .dp-input { width: 108px; }
+  .dp-btn {
+    background: transparent; color: var(--text-secondary); border: none;
+    padding: 3px 2px 3px 4px; display: inline-flex; align-items: center;
+  }
+  .dp-btn:hover { color: var(--text-primary); }
+  #dpPop {
+    position: fixed; z-index: 20; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.16); padding: 10px; width: 232px;
+  }
+  .dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .dp-title { font-weight: 650; font-size: 13px; }
+  .dp-nav {
+    background: transparent; border: none; color: var(--text-secondary);
+    font-size: 16px; line-height: 1; padding: 2px 9px; border-radius: 6px;
+  }
+  .dp-nav:hover { background: var(--ghost-hover); color: var(--text-primary); }
+  .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; }
+  .dp-grid .dow { text-align: center; color: var(--muted); font-size: 11px; padding: 3px 0; }
+  .dp-grid .day {
+    background: transparent; border: none; border-radius: 6px;
+    padding: 5px 0; font-size: 12.5px; color: var(--text-primary); text-align: center;
+  }
+  .dp-grid .day:hover { background: var(--ghost-hover); }
+  .dp-grid .day.dim { color: var(--muted); }
+  .dp-grid .day.sel { background: var(--accent-bg); color: var(--accent-ink); font-weight: 650; }
+  .dp-grid .day.today { text-decoration: underline; text-underline-offset: 2px; }
+  .dp-grid .day.sel.today { text-decoration-color: var(--accent-ink); }
+  .dp-today {
+    margin-top: 8px; width: 100%; background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 0; font-size: 12.5px; color: var(--text-secondary);
+  }
+  .dp-today:hover { background: var(--ghost-hover); }
+  button { font: inherit; cursor: pointer; border-radius: 6px; }
+  #findBtn {
+    background: var(--accent-bg); color: var(--accent-ink); border: none;
+    font-weight: 600; padding: 6px 18px;
+  }
+  #findBtn:hover { filter: brightness(1.08); }
+  #findBtn:disabled { opacity: 0.55; cursor: default; }
+  .presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .presets button {
+    background: transparent; color: var(--text-secondary);
+    border: 1px solid var(--border); padding: 5px 10px; font-size: 13px;
+  }
+  .presets button:hover { background: var(--ghost-hover); }
+  .presets button[aria-pressed="true"] { color: var(--text-primary); border-color: var(--baseline); font-weight: 600; }
+
+  .status-row { display: flex; gap: 12px; align-items: baseline; margin: 0 4px 16px; min-height: 20px; }
+  #status { font-size: 13px; color: var(--text-secondary); }
+  #status.error { color: var(--status-serious); font-weight: 600; }
+
+  /* ---- KPI row ---- */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  .tile .t-label { color: var(--text-secondary); font-size: 13px; }
+  .tile .t-value { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .tile .t-foot { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+  /* ---- chart cards ---- */
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px 10px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; font-weight: 650; margin: 0; }
+  .card .card-sub { color: var(--muted); font-size: 12.5px; margin: 1px 0 8px; }
+  .chart-wrap { width: 100%; transition: opacity 0.15s; }
+  .loading .chart-wrap { opacity: 0.45; }
+  canvas { display: block; width: 100%; }
+  canvas:focus-visible { outline: 2px solid var(--series-tokens); outline-offset: 2px; }
+
+  /* ---- tooltip ---- */
+  #tooltip {
+    position: fixed; z-index: 10; pointer-events: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.14); padding: 8px 11px; min-width: 150px;
+  }
+  #tooltip .tip-title { font-weight: 650; font-size: 13px; margin-bottom: 4px; }
+  #tooltip .tip-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; padding: 1px 0; }
+  #tooltip .tip-key { width: 10px; height: 2px; border-radius: 1px; flex: none; }
+  #tooltip .tip-lab { color: var(--text-secondary); }
+  #tooltip .tip-val { margin-left: auto; font-weight: 650; padding-left: 12px; }
+
+  /* ---- table view ---- */
+  details.tables { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  details.tables summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  details.tables h3 { font-size: 13px; margin: 18px 0 6px; color: var(--text-secondary); }
+  .table-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  thead th {
+    position: sticky; top: 0; background: var(--surface-1); text-align: left;
+    color: var(--text-secondary); font-weight: 600; padding: 7px 12px;
+    border-bottom: 1px solid var(--baseline); z-index: 1;
+  }
+  tbody td { padding: 5px 12px; border-bottom: 1px solid var(--grid); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 640px) {
+    .filters { gap: 8px; }
+  }
+  @media print {
+    .filters, .status-row { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <header class="top">
+    <h1>Z.ai Usage Dashboard</h1>
+    <p class="sub" id="dataNote">Live data from the Z.ai billing API — enter your API token once (saved in this browser) and press Find.</p>
+  </header>
+
+  <form class="filters" id="filterForm" novalidate>
+    <label>From <span class="dp"><input type="text" id="fromInput" class="dp-input" inputmode="numeric" placeholder="dd/MM/yyyy" autocomplete="off"><button type="button" class="dp-btn" data-for="fromInput" aria-label="Pick From date"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6h13M5 1v3M11 1v3"/></svg></button></span></label>
+    <label>To <span class="dp"><input type="text" id="toInput" class="dp-input" inputmode="numeric" placeholder="dd/MM/yyyy" autocomplete="off"><button type="button" class="dp-btn" data-for="toInput" aria-label="Pick To date"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.5" y="2.5" width="13" height="12" rx="2"/><path d="M1.5 6h13M5 1v3M11 1v3"/></svg></button></span></label>
+    <span class="presets" role="group" aria-label="Date range presets">
+      <button type="button" data-days="7">Last 7 days</button>
+      <button type="button" data-days="30">Last 30 days</button>
+      <button type="button" data-days="90">Last 90 days</button>
+      <button type="button" data-days="month">This month</button>
+    </span>
+    <label>Token <input type="password" id="tokenInput" autocomplete="off"></label>
+    <button type="submit" id="findBtn">Find</button>
+  </form>
+
+  <div id="dpPop" hidden>
+    <div class="dp-head">
+      <button type="button" class="dp-nav" id="dpPrev" aria-label="Previous month">‹</button>
+      <div class="dp-title" id="dpTitle"></div>
+      <button type="button" class="dp-nav" id="dpNext" aria-label="Next month">›</button>
+    </div>
+    <div class="dp-grid" id="dpGrid"></div>
+    <button type="button" class="dp-today" id="dpToday">Today</button>
+  </div>
+
+  <div class="status-row"><span id="status" role="status" aria-live="polite"></span></div>
+
+  <section class="kpis" id="kpis" aria-label="Summary"></section>
+
+  <section class="card" id="dailyCard">
+    <h2>Daily usage</h2>
+    <p class="card-sub">Tokens (top) and cost (bottom) per day — hover or focus the chart and use ← → for a day readout</p>
+    <div class="chart-wrap"><canvas id="dailyCanvas" tabindex="0" role="img"
+      aria-label="Bar chart of tokens and cost per day. Exact values are in the data tables below."></canvas></div>
+  </section>
+
+  <section class="card" id="usersCard">
+    <h2>Tokens by user</h2>
+    <p class="card-sub">Ranked by total tokens — hover or focus and use ↑ ↓ for cost and share; gray bar = unmapped API key</p>
+    <div class="chart-wrap"><canvas id="usersCanvas" tabindex="0" role="img"
+      aria-label="Horizontal bar chart of token usage per user. Exact values are in the data tables below."></canvas></div>
+  </section>
+
+  <details class="tables">
+    <summary>Data tables</summary>
+    <h3>By day</h3>
+    <div class="table-scroll"><table id="tableDay">
+      <thead><tr><th>Date</th><th class="num">Tokens</th><th class="num">Cost</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <h3>By user</h3>
+    <div class="table-scroll"><table id="tableUser">
+      <thead><tr><th>User</th><th class="num">Tokens</th><th class="num">Cost</th><th class="num">Share</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <h3>API key map</h3>
+    <div class="table-scroll"><table id="tableMap">
+      <thead><tr><th>User</th><th>API key</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </details>
+
+  <div id="tooltip" hidden></div>
+</div>
+
+<script>
+"use strict";
+/* Masked api_key -> username map, embedded from the local billing.db (seed_api_keys.py).
+   Usage records come live from the Z.ai billing API. */
+const KEY_USERS = {
+  "abcd...1234": "Alice",
+  "efgh...5678": "Bob",
+  "ijkl...9012": "Charlie"
+};
+
+const API_URL = "https://api.z.ai/api/platform-charge-zai/bill/day";
+const CUSTOMER_ID = "";
+const PAGE_SIZE = 100;
+const MAX_RETRIES = 2;
+const MAX_RANGE_DAYS = 366;
+
+/* ============================ state ============================ */
+let curRange = null;   // {from, to}
+let slice = null;      // {days:[iso], byDay:[], byUser:Map, totTokens, totCost}
+let dailyHover = -1, userHover = -1;
+let dailyLayout = null, usersLayout = null;
+let fetchCtl = null, fetchSeq = 0, loading = false;
+
+/* ============================ helpers ============================ */
+const $ = (id) => document.getElementById(id);
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DAY_MS = 86400000;
+
+function isoToUtc(iso) { const [y, m, d] = iso.split("-").map(Number); return Date.UTC(y, m - 1, d); }
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function fmtDateLong(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+const fmtDMY = fmtDateLong;
+/* Parse "d/M/yyyy" (any 1-2 digit day/month) into ISO, or null if invalid. */
+function parseDMY(str) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((str || "").trim());
+  if (!m) return null;
+  const d = +m[1], mo = +m[2], y = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  const dt = new Date(y, mo - 1, d);
+  if (dt.getDate() !== d || dt.getMonth() !== mo - 1) return null;
+  return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+/* Typing mask: digits only, slashes auto-inserted as dd/dd/yyyy. */
+function maskDMY(el) {
+  let v = el.value.replace(/\D/g, "").slice(0, 8);
+  if (v.length > 2) v = v.slice(0, 2) + "/" + v.slice(2);
+  if (v.length > 5) v = v.slice(0, 5) + "/" + v.slice(5);
+  el.value = v;
+}
+function enumerateDays(from, to) {
+  const out = [];
+  for (let t = isoToUtc(from); t <= isoToUtc(to); t += DAY_MS) {
+    const d = new Date(t);
+    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`);
+  }
+  return out;
+}
+function monthList(from, to) {
+  const out = [];
+  let [y, m] = from.split("-").map(Number);
+  const [ey, em] = to.split("-").map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    if (m === 12) { y++; m = 1; } else m++;
+  }
+  return out;
+}
+/* Same mask as db.py: first-4 ... last-4 — the billing API returns full keys,
+   the username map stores masked ones. */
+function maskKey(k) {
+  return k.length <= 8 ? k : k.slice(0, 4) + "..." + k.slice(-4);
+}
+function fmtCompact(n) {
+  const v = Math.round(n);
+  const trim = (x) => (x >= 100 ? String(Math.round(x)) : String(Math.round(x * 10) / 10));
+  if (v >= 1e9) return trim(v / 1e9) + "B";
+  if (v >= 1e6) return trim(v / 1e6) + "M";
+  if (v >= 1e3) return trim(v / 1e3) + "K";
+  return String(v);
+}
+function fmtInt(n) { return Math.round(n).toLocaleString("en-US"); }
+function fmtMoney(c) {
+  return "$" + c.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtMoneyTile(c) { return c >= 10000 ? "$" + fmtCompact(c) : fmtMoney(c); }
+
+function niceStep(rough) {
+  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const f = rough / pow;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * pow;
+}
+function scaleFor(max, target) {
+  if (!(max > 0)) return { yMax: 0, ticks: [0], step: 0 };
+  const step = niceStep(max / target);
+  const yMax = Math.max(step, Math.ceil(max / step - 1e-9) * step);
+  const ticks = [];
+  for (let v = 0; v <= yMax + step * 0.001; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
+  return { yMax, ticks, step };
+}
+function hexToRgb(h) {
+  h = h.replace("#", "");
+  if (h.length === 3) h = h.split("").map((c) => c + c).join("");
+  const n = parseInt(h, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function mix(a, b, t) {
+  const A = hexToRgb(a), B = hexToRgb(b);
+  return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(",") + ")";
+}
+function cssVar(name) {
+  return getComputedStyle(document.querySelector(".viz-root")).getPropertyValue(name).trim();
+}
+function prepCanvas(cv, cssW, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.max(1, Math.round(cssW * dpr));
+  cv.height = Math.max(1, Math.round(cssH * dpr));
+  cv.style.width = cssW + "px";
+  cv.style.height = cssH + "px";
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+function roundTopRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h);
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+  ctx.fill();
+}
+function roundRightRect(ctx, x, y, w, h, r) {
+  r = Math.min(r, h / 2, w);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x, y + h);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/* ============================ tooltip ============================ */
+function showTooltip(px, py, title, rows) {
+  const tip = $("tooltip");
+  tip.textContent = "";
+  const h = document.createElement("div");
+  h.className = "tip-title";
+  h.textContent = title;
+  tip.appendChild(h);
+  for (const r of rows) {
+    const line = document.createElement("div");
+    line.className = "tip-row";
+    const key = document.createElement("span");
+    key.className = "tip-key";
+    key.style.background = r.color;
+    const lab = document.createElement("span");
+    lab.className = "tip-lab";
+    lab.textContent = r.label;
+    const val = document.createElement("span");
+    val.className = "tip-val";
+    val.textContent = r.value;
+    line.append(key, lab, val);
+    tip.appendChild(line);
+  }
+  tip.hidden = false;
+  const rect = tip.getBoundingClientRect();
+  let tx = px + 16, ty = py + 14;
+  if (tx + rect.width > window.innerWidth - 8) tx = px - rect.width - 16;
+  if (ty + rect.height > window.innerHeight - 8) ty = py - rect.height - 14;
+  tip.style.left = Math.max(8, tx) + "px";
+  tip.style.top = Math.max(8, ty) + "px";
+}
+function hideTooltip() { $("tooltip").hidden = true; }
+
+/* ============================ Z.ai API ============================ */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchPage(cid, token, period, page, signal) {
+  const url = `${API_URL}?customerId=${encodeURIComponent(cid)}&billingPeriod=${period}&pageNum=${page}&pageSize=${PAGE_SIZE}`;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const resp = await fetch(url, { headers: { Authorization: "Bearer " + token }, signal });
+      if (!resp.ok) {
+        const detail = resp.status === 401 ? "unauthorized — check token" : "HTTP " + resp.status;
+        throw new Error(detail);
+      }
+      const body = await resp.json();
+      if (body.code !== 200 || body.success === false) {
+        throw new Error(body.msg || "API error (code " + body.code + ")");
+      }
+      return body;
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      lastErr = e;
+      if (attempt < MAX_RETRIES) await sleep(800 * (attempt + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/* Fetch one billing month as a billingNo-keyed Map.
+   The API's pagination is unstable while a month is still settling —
+   records slide between pages, so a single pass misses a few percent of
+   lines (measured: two back-to-back pulls differed by ~2-5%). Each month
+   is therefore fetched in up to MAX_PASSES passes, unioned on billingNo,
+   stopping early once a pass adds nothing new. Duplicates within and
+   across passes are free to union — they are value-identical (verified). */
+const MAX_PASSES = 3;
+
+async function fetchMonth(cid, token, period, signal, seq, onPage) {
+  const lines = new Map();
+  for (let pass = 1; pass <= MAX_PASSES; pass++) {
+    let added = 0;
+    const first = await fetchPage(cid, token, period, 1, signal);
+    const data = first.data || {};
+    const pages = Math.max(1, data.pages || 1);
+    for (const r of data.records || []) {
+      const no = String(r.billingNo);
+      if (!lines.has(no)) { lines.set(no, r); added++; }
+    }
+    for (let p = 2; p <= pages; p++) {
+      if (seq !== fetchSeq) return null; // superseded by a newer Find
+      onPage(pass, p, pages);
+      const body = await fetchPage(cid, token, period, p, signal);
+      for (const r of (body.data || {}).records || []) {
+        const no = String(r.billingNo);
+        if (!lines.has(no)) { lines.set(no, r); added++; }
+      }
+    }
+    if (added === 0) break; // pagination stable — this pass found nothing new
+  }
+  return lines;
+}
+
+/* Fetch every billing month covering [from, to], 3 months in parallel.
+   Months that fail entirely are skipped and reported — a partial load
+   beats none. */
+async function fetchRange(from, to, cid, token, seq, signal, onProgress) {
+  const periods = monthList(from, to);
+  const records = [];
+  const failed = [];
+  let doneMonths = 0;
+  const queue = periods.slice();
+
+  async function worker() {
+    while (queue.length) {
+      const period = queue.shift();
+      try {
+        const lines = await fetchMonth(cid, token, period, signal, seq,
+          (pass, page, pages) => onProgress(doneMonths, periods.length, pass, period, page, pages));
+        if (lines === null) return null;
+        for (const r of lines.values()) {
+          if (r && r.apiKey && r.billingDate >= from && r.billingDate <= to) records.push(r);
+        }
+      } catch (e) {
+        if (e.name === "AbortError") return null;
+        failed.push({ period, error: e.message });
+      }
+      doneMonths++;
+      onProgress(doneMonths, periods.length, 0, null, 0, 0);
+    }
+    return true;
+  }
+  await Promise.all([worker(), worker(), worker()]);
+  if (seq !== fetchSeq) return null;
+  return { records, failed, periods };
+}
+
+/* Aggregate raw API records into the render slice. Dedups on billingNo —
+   the API can return the same billing line on more than one page, which
+   billing.db handles with its billing_no UNIQUE constraint. */
+function aggregate(records, from, to) {
+  const days = enumerateDays(from, to);
+  const dayIdx = new Map(days.map((d, i) => [d, i]));
+  const byDay = days.map(() => ({ tokens: 0, cost: 0 }));
+  const byUser = new Map();
+  const seen = new Set();
+  let totTokens = 0, totCost = 0, distinct = 0;
+  for (const r of records) {
+    const no = String(r.billingNo ?? `${r.billingDate}|${r.apiKey}|${r.modelCode}|${r.tokenType}`);
+    if (seen.has(no)) continue;
+    seen.add(no);
+    distinct++;
+    const i = dayIdx.get(r.billingDate);
+    if (i === undefined) continue;
+    const tok = Number(r.usageCount) || 0;
+    const cost = (parseFloat(r.costPrice) || 0) * tok / 1000;
+    byDay[i].tokens += tok;
+    byDay[i].cost += cost;
+    const u = KEY_USERS[maskKey(String(r.apiKey))] || "Unknown";
+    let e = byUser.get(u);
+    if (!e) byUser.set(u, (e = { tokens: 0, cost: 0 }));
+    e.tokens += tok;
+    e.cost += cost;
+    totTokens += tok;
+    totCost += cost;
+  }
+  return { days, byDay, byUser, totTokens, totCost, distinct };
+}
+
+/* ============================ KPI tiles ============================ */
+function renderKpis() {
+  const box = $("kpis");
+  box.textContent = "";
+  let tiles;
+  if (!slice) {
+    tiles = [
+      { label: "Total tokens", value: "—", foot: "" },
+      { label: "Total cost", value: "—", foot: "cost price × tokens ÷ 1000" },
+      { label: "Active users", value: "—", foot: "" },
+      { label: "Peak day", value: "—", foot: "" },
+    ];
+  } else {
+    let peak = null;
+    slice.byDay.forEach((d, i) => {
+      if (d.tokens > 0 && (!peak || d.tokens > slice.byDay[peak].tokens)) peak = i;
+    });
+    const users = [...slice.byUser.values()].filter((v) => v.tokens > 0).length;
+    tiles = [
+      { label: "Total tokens", value: fmtCompact(slice.totTokens), foot: `across ${fmtInt(slice.days.length)} days` },
+      { label: "Total cost", value: fmtMoneyTile(slice.totCost), foot: "cost price × tokens ÷ 1000" },
+      { label: "Active users", value: String(users), foot: `of ${Object.keys(KEY_USERS).length} provisioned keys` },
+      peak !== null
+        ? { label: "Peak day", value: fmtCompact(slice.byDay[peak].tokens), foot: `${fmtDateLong(slice.days[peak])} · ${fmtMoney(slice.byDay[peak].cost)}` }
+        : { label: "Peak day", value: "—", foot: "no usage in range" },
+    ];
+  }
+  for (const t of tiles) {
+    const el = document.createElement("div");
+    el.className = "tile";
+    const l = document.createElement("div"); l.className = "t-label"; l.textContent = t.label;
+    const v = document.createElement("div"); v.className = "t-value"; v.textContent = t.value;
+    const f = document.createElement("div"); f.className = "t-foot"; f.textContent = t.foot;
+    el.append(l, v, f);
+    box.appendChild(el);
+  }
+}
+
+/* ============================ daily chart ============================ */
+function renderDaily() {
+  const cv = $("dailyCanvas");
+  const wrap = cv.parentElement;
+  const W = Math.max(320, wrap.clientWidth);
+  const C = {
+    grid: cssVar("--grid"), baseline: cssVar("--baseline"), muted: cssVar("--muted"),
+    secondary: cssVar("--text-secondary"), tokens: cssVar("--series-tokens"), cost: cssVar("--series-cost"),
+    surface: cssVar("--surface-1"),
+  };
+  const lift = (hex) => mix(hex, C.surface, 0.22);
+
+  const padTop1 = 20, tokensH = 200, midGap = 34, costH = 150, xBand = 34;
+  const H = padTop1 + tokensH + midGap + costH + xBand;
+  const ctx = prepCanvas(cv, W, H);
+
+  const emptyMsg = !slice ? "Enter credentials and press Find" : "No usage recorded in this range";
+  if (!slice || (slice.totTokens <= 0 && slice.totCost <= 0)) {
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillText(emptyMsg, W / 2, H / 2 - 10);
+    dailyLayout = null;
+    return;
+  }
+
+  const days = slice.days;
+  const n = days.length;
+  const tkT = scaleFor(Math.max(...slice.byDay.map((d) => d.tokens), 0), 4);
+  const tkC = scaleFor(Math.max(...slice.byDay.map((d) => d.cost), 0), 4);
+  ctx.font = "11px system-ui, sans-serif";
+  const wid = (arr, fmt) => Math.max(...arr.map((v) => ctx.measureText(fmt(v)).width), 0);
+  const padL = 12 + Math.ceil(Math.max(wid(tkT.ticks, fmtCompact), wid(tkC.ticks, (v) => "$" + fmtCompact(v)))) + 8;
+  const padR = 14;
+  const plotW = W - padL - padR;
+
+  const p1Top = padTop1, p1Bot = p1Top + tokensH;
+  const p2Top = p1Bot + midGap, p2Bot = p2Top + costH;
+  const bandW = plotW / n;
+  dailyLayout = { padL, plotW, bandW, p1Top, p1Bot, p2Top, p2Bot, days, W };
+
+  function panel(top, bot, ticks, yMax, color, value, fmtTick, hoverI) {
+    const h = bot - top;
+    ctx.strokeStyle = C.grid;
+    ctx.fillStyle = C.muted;
+    ctx.lineWidth = 1;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (const t of ticks) {
+      if (t === 0) continue;
+      const y = Math.round(bot - (t / yMax) * h) + 0.5;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+      ctx.fillText(fmtTick(t), padL - 8, y);
+    }
+    ctx.fillText(fmtTick(0), padL - 8, bot);
+    ctx.strokeStyle = C.baseline;
+    ctx.beginPath(); ctx.moveTo(padL, bot + 0.5); ctx.lineTo(W - padR, bot + 0.5); ctx.stroke();
+    const barW = Math.min(24, Math.max(1, bandW - (bandW >= 5 ? 2 : 0)));
+    for (let i = 0; i < n; i++) {
+      const v = value(i);
+      if (v <= 0) continue;
+      const bh = (v / yMax) * h;
+      const x = padL + i * bandW + (bandW - barW) / 2;
+      ctx.fillStyle = i === hoverI ? lift(color) : color;
+      roundTopRect(ctx, x, bot - bh, barW, bh, barW >= 3 ? 4 : 0);
+    }
+  }
+
+  panel(p1Top, p1Bot, tkT.ticks, tkT.yMax, C.tokens, (i) => slice.byDay[i].tokens, fmtCompact, dailyHover);
+  panel(p2Top, p2Bot, tkC.ticks, tkC.yMax, C.cost, (i) => slice.byDay[i].cost, (v) => "$" + fmtCompact(v), dailyHover);
+
+  // panel labels (single series each — the label names it, no legend box)
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = C.secondary;
+  ctx.font = "600 11px system-ui, sans-serif";
+  ctx.fillText("Tokens", padL, p1Top - 7);
+  ctx.fillText("Cost", padL, p2Top - 7);
+
+  // x labels — dd/MM/yyyy; month starts when the range is long, else width-fit marks
+  ctx.fillStyle = C.muted;
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  if (n > 45) {
+    let lastMonth = -1;
+    for (let i = 0; i < n; i++) {
+      const m = days[i].slice(5, 7);
+      if (m !== lastMonth) {
+        const x = Math.min(W - padR - 34, Math.max(padL + 34, padL + i * bandW + bandW / 2));
+        ctx.fillText(fmtDMY(days[i]), x, p2Bot + 8);
+        lastMonth = m;
+      }
+    }
+  } else {
+    const maxTicks = Math.max(3, Math.floor(plotW / 76));
+    const stepLbl = Math.max(1, Math.ceil(n / maxTicks));
+    for (let i = 0; i < n; i += stepLbl) {
+      const x = padL + i * bandW + bandW / 2;
+      if (x < padL + 36 || x > W - padR - 36) continue;
+      ctx.fillText(fmtDMY(days[i]), x, p2Bot + 8);
+    }
+  }
+
+  // crosshair across both panels
+  if (dailyHover >= 0 && dailyHover < n) {
+    const x = Math.round(padL + dailyHover * bandW + bandW / 2) + 0.5;
+    ctx.strokeStyle = C.secondary;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, p1Top);
+    ctx.lineTo(x, p2Bot);
+    ctx.stroke();
+  }
+}
+
+function dailyTooltip(i, px, py) {
+  const d = slice.byDay[i];
+  showTooltip(px, py, fmtDateLong(slice.days[i]), [
+    { color: cssVar("--series-tokens"), label: "Tokens", value: fmtCompact(d.tokens) + " (" + fmtInt(d.tokens) + ")" },
+    { color: cssVar("--series-cost"), label: "Cost", value: fmtMoney(d.cost) },
+  ]);
+}
+
+function bindDaily() {
+  const cv = $("dailyCanvas");
+  cv.addEventListener("pointermove", (e) => {
+    if (!dailyLayout) return;
+    const rect = cv.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const { padL, plotW, bandW, days } = dailyLayout;
+    let i = Math.floor((x - padL) / bandW);
+    if (x < padL || x > padL + plotW || i < 0 || i >= days.length) {
+      if (dailyHover !== -1) { dailyHover = -1; hideTooltip(); renderDaily(); }
+      return;
+    }
+    if (i !== dailyHover) { dailyHover = i; renderDaily(); }
+    dailyTooltip(i, e.clientX, e.clientY);
+  });
+  cv.addEventListener("pointerleave", () => {
+    dailyHover = -1; hideTooltip(); renderDaily();
+  });
+  cv.addEventListener("keydown", (e) => {
+    if (!dailyLayout) return;
+    const n = dailyLayout.days.length;
+    let i = dailyHover < 0 ? n - 1 : dailyHover;
+    if (e.key === "ArrowLeft") i = Math.max(0, i - 1);
+    else if (e.key === "ArrowRight") i = Math.min(n - 1, i + 1);
+    else if (e.key === "Home") i = 0;
+    else if (e.key === "Escape") { dailyHover = -1; hideTooltip(); renderDaily(); return; }
+    else if (e.key === "End") i = n - 1;
+    else return;
+    e.preventDefault();
+    dailyHover = i;
+    renderDaily();
+    const { padL, bandW, p1Top } = dailyLayout;
+    const rect = cv.getBoundingClientRect();
+    dailyTooltip(i, rect.left + padL + i * bandW + bandW / 2, rect.top + p1Top + 10);
+  });
+}
+
+/* ============================ users chart ============================ */
+function renderUsers() {
+  const cv = $("usersCanvas");
+  const wrap = cv.parentElement;
+  const W = Math.max(320, wrap.clientWidth);
+  const C = {
+    grid: cssVar("--grid"), baseline: cssVar("--baseline"), muted: cssVar("--muted"),
+    secondary: cssVar("--text-secondary"), tokens: cssVar("--series-tokens"), surface: cssVar("--surface-1"),
+  };
+  const lift = (hex) => mix(hex, C.surface, 0.22);
+
+  const ctx = prepCanvas(cv, W, 60);
+  if (!slice || slice.totTokens <= 0) {
+    ctx.fillStyle = C.muted;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = "13px system-ui, sans-serif";
+    ctx.fillText(!slice ? "Enter credentials and press Find" : "No usage recorded in this range", W / 2, 30);
+    usersLayout = null;
+    return;
+  }
+
+  const rows = [...slice.byUser.entries()]
+    .map(([name, v]) => ({ name, ...v }))
+    .sort((a, b) => b.tokens - a.tokens || a.name.localeCompare(b.name));
+
+  const rowH = 28, barH = 18, xBand = 30, topPad = 6;
+  const H = topPad + rows.length * rowH + xBand;
+  prepCanvas(cv, W, H);
+  ctx.font = "11px system-ui, sans-serif";
+  const nameW = Math.min(150, Math.max(80, ...rows.map((r) => ctx.measureText(r.name).width)) + 16);
+  const padL = 10, padR = 14;
+  const plotL = padL + nameW;
+  const plotW = W - plotL - padR;
+
+  const tk = scaleFor(Math.max(...rows.map((r) => r.tokens), 0), 5);
+  usersLayout = { rows, plotL, plotW, rowH, topPad, yMax: tk.yMax, W };
+
+  // vertical gridlines + x labels
+  ctx.textBaseline = "top";
+  ctx.textAlign = "center";
+  for (const t of tk.ticks) {
+    const x = Math.round(plotL + (t / tk.yMax) * plotW) + 0.5;
+    if (t !== 0) {
+      ctx.strokeStyle = C.grid;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, topPad); ctx.lineTo(x, topPad + rows.length * rowH); ctx.stroke();
+    }
+    ctx.fillStyle = C.muted;
+    ctx.fillText(fmtCompact(t), x, topPad + rows.length * rowH + 8);
+  }
+
+  // bars + names
+  const x0 = plotL;
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    const y = topPad + i * rowH + (rowH - barH) / 2;
+    const isUnknown = r.name === "Unknown";
+    const color = isUnknown ? C.muted : C.tokens;
+    const bw = Math.max(1, (r.tokens / tk.yMax) * plotW);
+    ctx.fillStyle = i === userHover ? lift(color) : color;
+    roundRightRect(ctx, x0, y, bw, barH, 4);
+    ctx.fillStyle = C.secondary;
+    ctx.textAlign = "right";
+    let nm = r.name;
+    while (ctx.measureText(nm + "…").width > nameW - 10 && nm.length > 1) nm = nm.slice(0, -1);
+    ctx.fillText(nm === r.name ? nm : nm + "…", x0 - 10, y + barH / 2);
+    if (i < 3) {
+      ctx.fillStyle = C.secondary;
+      ctx.textAlign = "left";
+      const lx = x0 + bw + 6;
+      const label = fmtCompact(r.tokens);
+      if (lx + ctx.measureText(label).width < W - padR) ctx.fillText(label, lx, y + barH / 2);
+    }
+  }
+
+  ctx.strokeStyle = C.baseline;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(plotL + 0.5, topPad);
+  ctx.lineTo(plotL + 0.5, topPad + rows.length * rowH);
+  ctx.stroke();
+}
+
+function usersTooltip(i, px, py) {
+  const r = usersLayout.rows[i];
+  const share = slice.totTokens > 0 ? (r.tokens / slice.totTokens) * 100 : 0;
+  showTooltip(px, py, r.name, [
+    { color: r.name === "Unknown" ? cssVar("--muted") : cssVar("--series-tokens"), label: "Tokens", value: fmtCompact(r.tokens) + " (" + fmtInt(r.tokens) + ")" },
+    { color: cssVar("--series-cost"), label: "Cost", value: fmtMoney(r.cost) },
+    { color: "transparent", label: "Share", value: (Math.round(share * 10) / 10) + "%" },
+  ]);
+}
+
+function bindUsers() {
+  const cv = $("usersCanvas");
+  cv.addEventListener("pointermove", (e) => {
+    if (!usersLayout) return;
+    const rect = cv.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const { topPad, rowH, rows, plotL, plotW } = usersLayout;
+    let i = Math.floor((y - topPad) / rowH);
+    if (y < topPad || i < 0 || i >= rows.length) {
+      if (userHover !== -1) { userHover = -1; hideTooltip(); renderUsers(); }
+      return;
+    }
+    if (e.clientX - rect.left < plotL - 8 || e.clientX - rect.left > plotL + plotW + 8) {
+      if (userHover !== -1) { userHover = -1; hideTooltip(); renderUsers(); }
+      return;
+    }
+    if (i !== userHover) { userHover = i; renderUsers(); }
+    usersTooltip(i, e.clientX, e.clientY);
+  });
+  cv.addEventListener("pointerleave", () => {
+    userHover = -1; hideTooltip(); renderUsers();
+  });
+  cv.addEventListener("keydown", (e) => {
+    if (!usersLayout) return;
+    const n = usersLayout.rows.length;
+    let i = userHover < 0 ? 0 : userHover;
+    if (e.key === "ArrowUp") i = Math.max(0, i - 1);
+    else if (e.key === "ArrowDown") i = Math.min(n - 1, i + 1);
+    else if (e.key === "Escape") { userHover = -1; hideTooltip(); renderUsers(); return; }
+    else return;
+    e.preventDefault();
+    userHover = i;
+    renderUsers();
+    const rect = cv.getBoundingClientRect();
+    usersTooltip(i, rect.left + usersLayout.plotL + Math.min(200, usersLayout.plotW / 2), rect.top + usersLayout.topPad + i * usersLayout.rowH + 14);
+  });
+}
+
+/* ============================ tables ============================ */
+function renderTables() {
+  const td = $("tableDay").tBodies[0];
+  td.textContent = "";
+  if (slice) {
+    slice.days.forEach((d, i) => {
+      const v = slice.byDay[i];
+      if (v.tokens === 0 && v.cost === 0) return;
+      const tr = document.createElement("tr");
+      const a = document.createElement("td"); a.textContent = fmtDateLong(d);
+      const b = document.createElement("td"); b.className = "num"; b.textContent = fmtInt(v.tokens);
+      const c = document.createElement("td"); c.className = "num"; c.textContent = fmtMoney(v.cost);
+      tr.append(a, b, c);
+      td.appendChild(tr);
+    });
+  }
+
+  const tu = $("tableUser").tBodies[0];
+  tu.textContent = "";
+  if (slice) {
+    const rows = [...slice.byUser.entries()].sort((a, b) => b[1].tokens - a[1].tokens);
+    for (const [name, v] of rows) {
+      if (v.tokens === 0) continue;
+      const tr = document.createElement("tr");
+      const a = document.createElement("td"); a.textContent = name;
+      const b = document.createElement("td"); b.className = "num"; b.textContent = fmtInt(v.tokens);
+      const c = document.createElement("td"); c.className = "num"; c.textContent = fmtMoney(v.cost);
+      const d = document.createElement("td"); d.className = "num";
+      d.textContent = (Math.round((v.tokens / (slice.totTokens || 1)) * 1000) / 10) + "%";
+      tr.append(a, b, c, d);
+      tu.appendChild(tr);
+    }
+  }
+}
+function renderMapTable() {
+  const tm = $("tableMap").tBodies[0];
+  tm.textContent = "";
+  const pairs = Object.entries(KEY_USERS).map(([k, u]) => ({ key: k, user: u }))
+    .sort((a, b) => a.user.localeCompare(b.user));
+  for (const p of pairs) {
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = p.user;
+    const b = document.createElement("td"); b.textContent = p.key;
+    tr.append(a, b);
+    tm.appendChild(tr);
+  }
+}
+
+/* ============================ status + load flow ============================ */
+function setStatus(text, isError) {
+  const el = $("status");
+  el.textContent = text;
+  el.classList.toggle("error", !!isError);
+}
+
+function paintLoading(on) {
+  loading = on;
+  $("dailyCard").classList.toggle("loading", on);
+  $("usersCard").classList.toggle("loading", on);
+  const btn = $("findBtn");
+  btn.disabled = on;
+  btn.textContent = on ? "Loading…" : "Find";
+}
+
+async function load() {
+  const from = parseDMY($("fromInput").value);
+  const to = parseDMY($("toInput").value);
+  const token = $("tokenInput").value.trim();
+
+  if (!from || !to) { setStatus("⚠ Dates must be dd/MM/yyyy.", true); return; }
+  if (from > to) { setStatus("⚠ “From” is after “To”.", true); return; }
+  if (Math.round((isoToUtc(to) - isoToUtc(from)) / DAY_MS) + 1 > MAX_RANGE_DAYS) {
+    setStatus("⚠ Range too wide — pick up to " + MAX_RANGE_DAYS + " days.", true); return;
+  }
+  if (!token) { setStatus("⚠ Enter your API token.", true); return; }
+
+  // token is always remembered in this browser's localStorage
+  try { localStorage.setItem("zdash-token", token); } catch (_) {}
+
+  // supersede any in-flight load
+  if (fetchCtl) fetchCtl.abort();
+  const seq = ++fetchSeq;
+  const ctl = new AbortController();
+  fetchCtl = ctl;
+
+  curRange = { from, to };
+  dailyHover = -1; userHover = -1;
+  paintLoading(true);
+  setStatus("Fetching " + fmtDMY(from) + " → " + fmtDMY(to) + " from Z.ai…");
+
+  const t0 = performance.now();
+  let result;
+  try {
+    result = await fetchRange(from, to, CUSTOMER_ID, token, seq, ctl.signal, (doneM, totalM, pass, period, page, pages) => {
+      if (period) setStatus(`Fetching ${period} · page ${page}/${pages} · pass ${pass} · month ${Math.min(doneM + 1, totalM)}/${totalM}…`);
+      else if (doneM < totalM) setStatus(`Fetched ${doneM}/${totalM} months…`);
+    });
+  } catch (e) {
+    if (e.name === "AbortError" || seq !== fetchSeq) return; // superseded
+    paintLoading(false);
+    setStatus("⚠ Load failed: " + e.message, true);
+    return;
+  }
+  if (seq !== fetchSeq) return; // superseded — a newer Find owns the screen
+  paintLoading(false);
+
+  const { records, failed, periods } = result;
+  slice = aggregate(records, from, to);
+  renderKpis();
+  renderDaily();
+  renderUsers();
+  renderTables();
+
+  const secs = Math.max(0.1, (performance.now() - t0) / 1000).toFixed(1);
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+  $("dataNote").textContent =
+    `Live from Z.ai API · ${fmtInt(slice.distinct)} billing lines · ${periods.length} month${periods.length > 1 ? "s" : ""} · ${fmtDateLong(from)} – ${fmtDateLong(to)} · ${hhmm}`;
+
+  if (failed.length) {
+    setStatus(`⚠ Loaded with ${failed.length} failed month(s): ` +
+      failed.map((f) => `${f.period} (${f.error})`).join(", "), true);
+  } else if (slice.distinct === 0) {
+    setStatus(`No records in range · ${secs}s`);
+  } else {
+    const dupes = records.length - slice.distinct;
+    setStatus(`${fmtInt(slice.distinct)} billing lines` +
+      (dupes > 0 ? ` (${fmtInt(dupes)} page-overlap duplicates skipped)` : "") +
+      ` · loaded in ${secs}s`);
+  }
+}
+
+$("filterForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  load();
+});
+document.querySelectorAll(".presets button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const today = todayIso();
+    let from;
+    if (btn.dataset.days === "month") {
+      from = today.slice(0, 8) + "01";
+    } else {
+      const d = Number(btn.dataset.days);
+      from = new Date(isoToUtc(today) - (d - 1) * DAY_MS).toISOString().slice(0, 10);
+    }
+    $("fromInput").value = fmtDMY(from);
+    $("toInput").value = fmtDMY(today);
+    document.querySelectorAll(".presets button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+    if (!loading) load();
+  });
+});
+
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { renderDaily(); renderUsers(); }, 120);
+});
+
+/* ============================ date picker ============================ */
+let dpTarget = null;   // input the popup is editing
+let dpView = null;     // [year, month-1] currently displayed
+
+function openDP(input) {
+  dpTarget = input;
+  const iso = parseDMY(input.value) || todayIso();
+  dpView = [+iso.slice(0, 4), +iso.slice(5, 7) - 1];
+  $("dpPop").hidden = false;
+  placeDP();
+  renderDP();
+}
+function placeDP() {
+  const r = dpTarget.getBoundingClientRect();
+  const pop = $("dpPop");
+  let top = r.bottom + 6;
+  if (top + pop.offsetHeight > window.innerHeight - 8) top = r.top - pop.offsetHeight - 6;
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + "px";
+  pop.style.top = top + "px";
+}
+function renderDP() {
+  const [y, m] = dpView;
+  $("dpTitle").textContent = MONTHS[m] + " " + y;
+  const grid = $("dpGrid");
+  grid.textContent = "";
+  for (const d of ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]) {
+    const el = document.createElement("div");
+    el.className = "dow";
+    el.textContent = d;
+    grid.appendChild(el);
+  }
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysIn = new Date(y, m + 1, 0).getDate();
+  const selected = dpTarget ? parseDMY(dpTarget.value) : null;
+  const today = todayIso();
+  // leading blanks, then the month's days
+  for (let i = 0; i < firstDow; i++) grid.appendChild(document.createElement("div"));
+  for (let d = 1; d <= daysIn; d++) {
+    const iso = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "day" + (iso === selected ? " sel" : "") + (iso === today ? " today" : "");
+    b.textContent = d;
+    b.addEventListener("click", () => {
+      dpTarget.value = fmtDMY(iso);
+      closeDP();
+      dpTarget.focus();
+    });
+    grid.appendChild(b);
+  }
+}
+function closeDP() {
+  $("dpPop").hidden = true;
+  dpTarget = null;
+}
+document.querySelectorAll(".dp-btn").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const input = $(btn.dataset.for);
+    if (dpTarget === input) { closeDP(); return; }
+    openDP(input);
+  });
+});
+$("dpPrev").addEventListener("click", () => {
+  dpView[1]--; if (dpView[1] < 0) { dpView[1] = 11; dpView[0]--; }
+  renderDP();
+});
+$("dpNext").addEventListener("click", () => {
+  dpView[1]++; if (dpView[1] > 11) { dpView[1] = 0; dpView[0]++; }
+  renderDP();
+});
+$("dpToday").addEventListener("click", () => {
+  if (dpTarget) dpTarget.value = fmtDMY(todayIso());
+  closeDP();
+});
+document.addEventListener("pointerdown", (e) => {
+  if ($("dpPop").hidden) return;
+  if (!e.target.closest("#dpPop") && !e.target.closest(".dp")) closeDP();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("dpPop").hidden) closeDP();
+});
+window.addEventListener("resize", () => { if (!$("dpPop").hidden) placeDP(); });
+for (const id of ["fromInput", "toInput"]) {
+  $(id).addEventListener("input", (e) => maskDMY(e.target));
+  $(id).addEventListener("focus", () => { if (!$("dpPop").hidden && dpTarget !== $(id)) closeDP(); });
+}
+
+/* init */
+(function init() {
+  let savedToken = "";
+  try {
+    savedToken = localStorage.getItem("zdash-token") || "";
+    if (!savedToken) {
+      // legacy format from earlier versions: {"cid":..., "token":...}
+      const legacy = JSON.parse(localStorage.getItem("zdash-creds") || "null");
+      if (legacy && legacy.token) savedToken = legacy.token;
+    }
+  } catch (_) {}
+  if (savedToken) $("tokenInput").value = savedToken;
+  const today = todayIso();
+  $("fromInput").value = fmtDMY(new Date(isoToUtc(today) - 29 * DAY_MS).toISOString().slice(0, 10));
+  $("toInput").value = fmtDMY(today);
+  document.querySelector('.presets button[data-days="30"]').setAttribute("aria-pressed", "true");
+  bindDaily();
+  bindUsers();
+  renderMapTable();
+  renderKpis();
+  renderDaily();
+  renderUsers();
+  renderTables();
+})();
+</script>
+</body>
+</html>
